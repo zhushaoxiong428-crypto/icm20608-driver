@@ -1,0 +1,9 @@
+# 内核模块编译产物
+*.o
+*.ko
+*.mod.c
+*.order
+*.symvers
+.*.cmd
+.tmp_versions/
+*.swp

@@ -1,5 +1,5 @@
 --- imx6ull-alientek-emmc.dts.orig	2026-11-16 16:43:57.177394298 -0900
-+++ imx6ull-alientek-emmc.dts	2026-11-16 17:04:07.366416871 -0900
++++ imx6ull-alientek-emmc.dts	2026-11-16 17:41:26.819663128 -0900
 @@ -231,9 +231,10 @@
  	pinctrl-names = "default";
  	pinctrl-0 = <&pinctrl_flexcan2>;
@@ -48,7 +48,7 @@
 +	status = "okay";
 +
 +	icm20608: imu@0 {
-+		compatible = "invensense,icm20608";
++		compatible = "invensense,icm20608d";
 +		reg = <0>;
 +		spi-max-frequency = <1000000>;
 +	};
