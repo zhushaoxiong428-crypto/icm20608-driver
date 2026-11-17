@@ -1,0 +1,56 @@
+--- imx6ull-alientek-emmc.dts.orig	2026-11-16 16:43:57.177394298 -0900
++++ imx6ull-alientek-emmc.dts	2026-11-16 17:04:07.366416871 -0900
+@@ -231,9 +231,10 @@
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&pinctrl_flexcan2>;
+ 	xceiver-supply = <&reg_can_3v3>;
+-	status = "okay";
++	status = "disabled";
+ };
+ 
++
+ &gpc {
+ 	fsl,cpu_pupscr_sw2iso = <0x1>;
+ 	fsl,cpu_pupscr_sw = <0x0>;
+@@ -371,6 +372,14 @@
+ 				MX6UL_PAD_UART2_CTS_B__FLEXCAN2_TX	0x1b020
+ 			>;
+ 		};
++		pinctrl_ecspi3: ecspi3grp {
++				fsl,pins = <
++				MX6UL_PAD_UART2_TX_DATA__GPIO1_IO20	0x10b0	/* CS，当普通 GPIO 用 */
++				MX6UL_PAD_UART2_RX_DATA__ECSPI3_SCLK	0x10b1
++				MX6UL_PAD_UART2_RTS_B__ECSPI3_MISO	0x10b1
++				MX6UL_PAD_UART2_CTS_B__ECSPI3_MOSI	0x10b1
++			>;
++		};
+ 
+ 		pinctrl_i2c1: i2c1grp {
+ 			fsl,pins = <
+@@ -737,7 +746,7 @@
+ 	/* for DTE mode, add below change */
+ 	/* fsl,dte-mode; */
+ 	/* pinctrl-0 = <&pinctrl_uart2dte>; */
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &usbotg1 {
+@@ -789,3 +798,17 @@
+ 	pinctrl-0 = <&pinctrl_wdog>;
+ 	fsl,wdog_b;
+ };
++&ecspi3 {
++	fsl,spi-num-chipselects = <1>;
++	cs-gpios = <&gpio1 20 GPIO_ACTIVE_LOW>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_ecspi3>;
++	status = "okay";
++
++	icm20608: imu@0 {
++		compatible = "invensense,icm20608";
++		reg = <0>;
++		spi-max-frequency = <1000000>;
++	};
++};
++
