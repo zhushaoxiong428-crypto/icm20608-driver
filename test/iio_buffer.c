@@ -17,6 +17,8 @@
 #include <time.h>
 #include <math.h>
 
+#include "cpustat.h"
+
 #define REC_SIZE	24
 #define BATCH		64
 
@@ -117,6 +119,7 @@ int main(int argc, char *argv[])
 	uint8_t buf[REC_SIZE * BATCH];
 	char attr[64], devnode[64], rate_str[16];
 	double as, gs, tsc, toff, t_end;
+	struct cpustat c0, c1;
 	size_t n = 0, i;
 	int id, fd;
 
@@ -155,6 +158,7 @@ int main(int argc, char *argv[])
 	       (int)sysfs_read_double("sampling_frequency"), secs);
 
 	/* 2. 连续读：没有数据时 read 会阻塞，直到有新样本进缓冲区 */
+	cpustat_read(&c0);
 	t_end = now_s() + secs;
 	while (now_s() < t_end && n < cap) {
 		ssize_t r = read(fd, buf, sizeof(buf));
@@ -178,6 +182,7 @@ int main(int argc, char *argv[])
 			n++;
 		}
 	}
+	cpustat_read(&c1);
 	close(fd);
 	sysfs_write("buffer/enable", "0");
 
@@ -211,6 +216,7 @@ int main(int argc, char *argv[])
 		       dt[(size_t)(m * 0.99)] / 1e3, dt[m - 1] / 1e3);
 		printf("gaps > 1.5 periods: estimated lost samples %zu (%.3f%%)\n",
 		       lost, 100.0 * lost / (n + lost));
+		printf("system CPU busy: %.1f%%\n", cpustat_busy_pct(&c0, &c1));
 		free(dt);
 	}
 	free(ts);

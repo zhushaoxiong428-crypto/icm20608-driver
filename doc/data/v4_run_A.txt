@@ -1,0 +1,6 @@
+=== A: driver idle
+/dev/iio:device0 (/sys/bus/iio/devices/iio:device0): 1000 Hz requested, 10.0 s
+samples 10012 in 10.002 s -> 1000.9 Hz
+interval us: mean 999.1  sd 2.4  min 968.7  p50 999.0  p99 1006.0  max 1032.0
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 2.0%
