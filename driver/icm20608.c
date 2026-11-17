@@ -1,17 +1,20 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * ICM-20608-G / ICM-20608-D 六轴 IMU 的 SPI + IIO 驱动
+ *
+ * v2：寄存器访问用 regmap，数据通过 IIO 子系统导出：
+ *   /sys/bus/iio/devices/iio:deviceN/in_accel_{x,y,z}_raw     + in_accel_scale
+ *   /sys/bus/iio/devices/iio:deviceN/in_anglvel_{x,y,z}_raw   + in_anglvel_scale
+ *   /sys/bus/iio/devices/iio:deviceN/in_temp_{raw,offset,scale}
+ * 物理量 = (raw + offset) * scale，单位：m/s^2、rad/s、毫摄氏度
+ */
 #include <linux/module.h>
 #include <linux/spi/spi.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/delay.h>
-#include <linux/fs.h>
-#include <linux/cdev.h>
-#include <linux/device.h>
-#include <linux/uaccess.h>
-#include <linux/slab.h>
-
-#include "icm20608_uapi.h"
-
-#define ICM20608_DEV_NAME	"icm20608"
+#include <linux/regmap.h>
+#include <linux/iio/iio.h>
 
 /* 寄存器地址（ICM-20608 Register Map） */
 #define ICM20608_REG_SMPLRT_DIV		0x19
@@ -19,7 +22,13 @@
 #define ICM20608_REG_GYRO_CONFIG	0x1B
 #define ICM20608_REG_ACCEL_CONFIG	0x1C
 #define ICM20608_REG_ACCEL_CONFIG2	0x1D
-#define ICM20608_REG_ACCEL_XOUT_H	0x3B	/* 0x3B~0x48 共 14 字节数据 */
+#define ICM20608_REG_ACCEL_XOUT_H	0x3B
+#define ICM20608_REG_ACCEL_YOUT_H	0x3D
+#define ICM20608_REG_ACCEL_ZOUT_H	0x3F
+#define ICM20608_REG_TEMP_OUT_H		0x41
+#define ICM20608_REG_GYRO_XOUT_H	0x43
+#define ICM20608_REG_GYRO_YOUT_H	0x45
+#define ICM20608_REG_GYRO_ZOUT_H	0x47
 #define ICM20608_REG_USER_CTRL		0x6A
 #define ICM20608_REG_PWR_MGMT_1		0x6B
 #define ICM20608_REG_PWR_MGMT_2		0x6C
@@ -27,21 +36,35 @@
 
 /* 位定义 */
 #define ICM20608_PWR1_DEVICE_RESET	0x80	/* 复位，完成后自动清零 */
+#define ICM20608_PWR1_SLEEP		0x40	/* 进入睡眠 */
 #define ICM20608_PWR1_CLKSEL_AUTO	0x01	/* 自动选择最佳时钟，同时 SLEEP=0 */
-#define ICM20608_PWR1_SLEEP		0x40	/* 进入睡眠，省电 */
 #define ICM20608_USER_I2C_IF_DIS	0x10	/* 关闭 I2C 接口，只用 SPI */
 #define ICM20608_GYRO_FS_2000DPS	(3 << 3)	/* 16.4 LSB/(deg/s) */
 #define ICM20608_ACCEL_FS_2G		(0 << 3)	/* 16384 LSB/g */
 #define ICM20608_DLPF_CFG		3	/* 陀螺仪带宽约 41 Hz */
 #define ICM20608_A_DLPF_CFG		3	/* 加速度计带宽约 44.8 Hz */
 
+/*
+ * IIO 的换算系数（与上面固定的量程对应）：
+ *   加速度 9.80665 / 16384            = 0.000598550 m/s^2 每 LSB
+ *   角速度 (1 / 16.4) * PI / 180      = 0.001064225 rad/s 每 LSB
+ *   温度   1000 / 326.8               = 3.059976    毫摄氏度每 LSB
+ *          offset = 25 degC * 326.8   = 8170 LSB
+ */
+#define ICM20608_ACCEL_SCALE_NANO	598550
+#define ICM20608_GYRO_SCALE_NANO	1064225
+#define ICM20608_TEMP_SCALE_INT		3
+#define ICM20608_TEMP_SCALE_MICRO	59976
+#define ICM20608_TEMP_OFFSET		8170
+
 struct icm20608_chip {
-	const char *name;
+	const char *name;	/* 打印用 */
+	const char *iio_name;	/* IIO 设备名，出现在 .../name */
 	u8 whoami;
 };
 
-static const struct icm20608_chip icm20608g = { "ICM-20608-G", 0xAF };
-static const struct icm20608_chip icm20608d = { "ICM-20608-D", 0xAE };
+static const struct icm20608_chip icm20608g = { "ICM-20608-G", "icm20608", 0xAF };
+static const struct icm20608_chip icm20608d = { "ICM-20608-D", "icm20608d", 0xAE };
 
 static const struct of_device_id icm20608_of_match[] = {
 	{ .compatible = "invensense,icm20608",  .data = &icm20608g },
@@ -50,49 +73,112 @@ static const struct of_device_id icm20608_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, icm20608_of_match);
 
-/*
- * 每个设备一份的状态。v1 先只支持一个设备（板子上只有一颗 IMU），
- * class 和设备号在 probe 里申请；v2 改用 IIO 子系统后这部分会被替换。
- */
+/* 每个设备一份的状态，由 devm_iio_device_alloc 一起分配（iio_priv 取得） */
 struct icm20608_dev {
 	struct spi_device *spi;
+	struct regmap *map;
 	const struct icm20608_chip *chip;
-	dev_t devt;		/* 设备号 */
-	struct cdev cdev;	/* 字符设备对象，挂着 file_operations */
-	struct class *class;	/* /sys/class/icm20608 */
-	struct device *device;	/* 让 mdev/udev 创建 /dev/icm20608 */
 };
 
-static int icm20608_read_reg(struct spi_device *spi, u8 reg, u8 *val)
-{
-	u8 tx = reg | 0x80;
+/*
+ * regmap：告诉内核这颗芯片的寄存器格式，之后统一用 regmap_read/write，
+ * 不用再自己拼 SPI 字节。读的时候地址最高位置 1（read_flag_mask）。
+ */
+static const struct regmap_config icm20608_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 8,
+	.read_flag_mask = 0x80,
+	.max_register = ICM20608_REG_WHO_AM_I,
+};
 
-	return spi_write_then_read(spi, &tx, 1, val, 1);
+/* ---------- IIO 通道：每个通道对应 sysfs 下的一组文件 ---------- */
+
+#define ICM20608_AXIS_CHAN(_type, _axis, _addr) {			\
+	.type = _type,							\
+	.modified = 1,							\
+	.channel2 = IIO_MOD_##_axis,					\
+	.address = _addr,						\
+	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),			\
+	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE),		\
 }
 
-/* 连续读 len 个寄存器：芯片会自动把地址加 1 */
-static int icm20608_read_regs(struct spi_device *spi, u8 reg, u8 *buf, size_t len)
-{
-	u8 tx = reg | 0x80;
+static const struct iio_chan_spec icm20608_channels[] = {
+	ICM20608_AXIS_CHAN(IIO_ACCEL, X, ICM20608_REG_ACCEL_XOUT_H),
+	ICM20608_AXIS_CHAN(IIO_ACCEL, Y, ICM20608_REG_ACCEL_YOUT_H),
+	ICM20608_AXIS_CHAN(IIO_ACCEL, Z, ICM20608_REG_ACCEL_ZOUT_H),
+	{
+		.type = IIO_TEMP,
+		.address = ICM20608_REG_TEMP_OUT_H,
+		.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) |
+				      BIT(IIO_CHAN_INFO_SCALE) |
+				      BIT(IIO_CHAN_INFO_OFFSET),
+	},
+	ICM20608_AXIS_CHAN(IIO_ANGL_VEL, X, ICM20608_REG_GYRO_XOUT_H),
+	ICM20608_AXIS_CHAN(IIO_ANGL_VEL, Y, ICM20608_REG_GYRO_YOUT_H),
+	ICM20608_AXIS_CHAN(IIO_ANGL_VEL, Z, ICM20608_REG_GYRO_ZOUT_H),
+};
 
-	return spi_write_then_read(spi, &tx, 1, buf, len);
+/* 用户 cat 某个 sysfs 文件时，IIO 核心调用这里，mask 说明要读的是哪种值 */
+static int icm20608_read_raw(struct iio_dev *indio_dev,
+			     struct iio_chan_spec const *chan,
+			     int *val, int *val2, long mask)
+{
+	struct icm20608_dev *idev = iio_priv(indio_dev);
+	__be16 data;
+	int ret;
+
+	switch (mask) {
+	case IIO_CHAN_INFO_RAW:
+		/* 每个量 2 字节、高字节在前，一次连续读 */
+		ret = regmap_bulk_read(idev->map, chan->address, &data, sizeof(data));
+		if (ret)
+			return ret;
+		*val = (s16)be16_to_cpu(data);
+		return IIO_VAL_INT;
+
+	case IIO_CHAN_INFO_SCALE:
+		switch (chan->type) {
+		case IIO_ACCEL:
+			*val = 0;
+			*val2 = ICM20608_ACCEL_SCALE_NANO;
+			return IIO_VAL_INT_PLUS_NANO;
+		case IIO_ANGL_VEL:
+			*val = 0;
+			*val2 = ICM20608_GYRO_SCALE_NANO;
+			return IIO_VAL_INT_PLUS_NANO;
+		case IIO_TEMP:
+			*val = ICM20608_TEMP_SCALE_INT;
+			*val2 = ICM20608_TEMP_SCALE_MICRO;
+			return IIO_VAL_INT_PLUS_MICRO;
+		default:
+			return -EINVAL;
+		}
+
+	case IIO_CHAN_INFO_OFFSET:
+		if (chan->type != IIO_TEMP)
+			return -EINVAL;
+		*val = ICM20608_TEMP_OFFSET;
+		return IIO_VAL_INT;
+	}
+
+	return -EINVAL;
 }
 
-static int icm20608_write_reg(struct spi_device *spi, u8 reg, u8 val)
-{
-	u8 tx[2] = { reg & 0x7F, val };	/* 最高位 0 = 写 */
+static const struct iio_info icm20608_info = {
+	.driver_module = THIS_MODULE,
+	.read_raw = icm20608_read_raw,
+};
 
-	/* 不直接用 spi_write：它要求缓冲区能做 DMA，栈上的数组不行；
-	 * spi_write_then_read 会先拷贝到内部缓冲区，小数据量这样最省心 */
-	return spi_write_then_read(spi, tx, sizeof(tx), NULL, 0);
-}
+/* ---------- 芯片初始化 ---------- */
 
-static int icm20608_chip_init(struct spi_device *spi)
+struct icm20608_reg_val {
+	u8 reg;
+	u8 val;
+};
+
+static int icm20608_chip_init(struct icm20608_dev *idev)
 {
-	static const struct {
-		u8 reg;
-		u8 val;
-	} cfg[] = {
+	static const struct icm20608_reg_val cfg[] = {
 		{ ICM20608_REG_USER_CTRL,     ICM20608_USER_I2C_IF_DIS },
 		{ ICM20608_REG_PWR_MGMT_2,    0x00 },	/* 6 个轴全开 */
 		{ ICM20608_REG_SMPLRT_DIV,    0x00 },	/* 1 kHz / (1 + 0) */
@@ -101,34 +187,35 @@ static int icm20608_chip_init(struct spi_device *spi)
 		{ ICM20608_REG_ACCEL_CONFIG,  ICM20608_ACCEL_FS_2G },
 		{ ICM20608_REG_ACCEL_CONFIG2, ICM20608_A_DLPF_CFG },
 	};
-	u8 val;
+	struct device *dev = &idev->spi->dev;
+	unsigned int val;
 	int i, ret;
 
-	/* 1. 软件复位，手册：复位后最长 100 ms 才能读写寄存器 */
-	ret = icm20608_write_reg(spi, ICM20608_REG_PWR_MGMT_1,
-				 ICM20608_PWR1_DEVICE_RESET);
+	/* 1. 软件复位；手册：复位后最长 100 ms 才能读写寄存器 */
+	ret = regmap_write(idev->map, ICM20608_REG_PWR_MGMT_1,
+			   ICM20608_PWR1_DEVICE_RESET);
 	if (ret)
 		return ret;
 	msleep(100);
 
 	/* 2. 先唤醒：复位后芯片处于睡眠，睡眠时部分寄存器（如 USER_CTRL）
 	 *    写不进去。手册：从睡眠到可读写最长 5 ms */
-	ret = icm20608_write_reg(spi, ICM20608_REG_PWR_MGMT_1,
-				 ICM20608_PWR1_CLKSEL_AUTO);
+	ret = regmap_write(idev->map, ICM20608_REG_PWR_MGMT_1,
+			   ICM20608_PWR1_CLKSEL_AUTO);
 	if (ret)
 		return ret;
 	msleep(10);
 
 	/* 3. 逐个写配置，并读回校验 */
 	for (i = 0; i < ARRAY_SIZE(cfg); i++) {
-		ret = icm20608_write_reg(spi, cfg[i].reg, cfg[i].val);
+		ret = regmap_write(idev->map, cfg[i].reg, cfg[i].val);
 		if (ret)
 			return ret;
-		ret = icm20608_read_reg(spi, cfg[i].reg, &val);
+		ret = regmap_read(idev->map, cfg[i].reg, &val);
 		if (ret)
 			return ret;
 		if (val != cfg[i].val) {
-			dev_err(&spi->dev, "reg 0x%02x: wrote 0x%02x, read 0x%02x\n",
+			dev_err(dev, "reg 0x%02x: wrote 0x%02x, read 0x%02x\n",
 				cfg[i].reg, cfg[i].val, val);
 			return -EIO;
 		}
@@ -139,130 +226,19 @@ static int icm20608_chip_init(struct spi_device *spi)
 	return 0;
 }
 
-/* 读一次六轴 + 温度：14 字节，每个量高字节在前（大端），转成 CPU 字节序 */
-static int icm20608_read_sample(struct spi_device *spi,
-				struct icm20608_sample *s)
-{
-	u8 buf[14];
-	int i, ret;
-
-	ret = icm20608_read_regs(spi, ICM20608_REG_ACCEL_XOUT_H, buf, sizeof(buf));
-	if (ret)
-		return ret;
-
-	for (i = 0; i < 3; i++) {
-		s->accel[i] = (s16)((buf[2 * i] << 8) | buf[2 * i + 1]);
-		s->gyro[i]  = (s16)((buf[8 + 2 * i] << 8) | buf[9 + 2 * i]);
-	}
-	s->temp = (s16)((buf[6] << 8) | buf[7]);
-	return 0;
-}
-
-/* ---------- file_operations：/dev/icm20608 的系统调用入口 ---------- */
-
-static int icm20608_open(struct inode *inode, struct file *filp)
-{
-	/* 由 cdev 找回整个设备结构体，存起来给 read 用 */
-	filp->private_data = container_of(inode->i_cdev, struct icm20608_dev, cdev);
-	return 0;
-}
-
-static int icm20608_release(struct inode *inode, struct file *filp)
-{
-	return 0;
-}
-
-/*
- * read：每次调用都从芯片读一份最新数据。传感器是"数据流"，没有文件
- * 位置的概念，所以忽略 *ppos；用户缓冲区小于一个样本时返回 -EINVAL。
- */
-static ssize_t icm20608_read(struct file *filp, char __user *ubuf,
-			     size_t count, loff_t *ppos)
-{
-	struct icm20608_dev *idev = filp->private_data;
-	struct icm20608_sample s;
-	int ret;
-
-	if (count < sizeof(s))
-		return -EINVAL;
-
-	ret = icm20608_read_sample(idev->spi, &s);
-	if (ret)
-		return ret;
-
-	if (copy_to_user(ubuf, &s, sizeof(s)))
-		return -EFAULT;
-
-	return sizeof(s);
-}
-
-static const struct file_operations icm20608_fops = {
-	.owner   = THIS_MODULE,
-	.open    = icm20608_open,
-	.release = icm20608_release,
-	.read    = icm20608_read,
-	.llseek  = no_llseek,
-};
-
-/* 注册字符设备：设备号 -> cdev -> class -> device（/dev 节点） */
-static int icm20608_cdev_register(struct icm20608_dev *idev)
-{
-	int ret;
-
-	ret = alloc_chrdev_region(&idev->devt, 0, 1, ICM20608_DEV_NAME);
-	if (ret)
-		return ret;
-
-	cdev_init(&idev->cdev, &icm20608_fops);
-	idev->cdev.owner = THIS_MODULE;
-	ret = cdev_add(&idev->cdev, idev->devt, 1);
-	if (ret)
-		goto err_region;
-
-	idev->class = class_create(THIS_MODULE, ICM20608_DEV_NAME);
-	if (IS_ERR(idev->class)) {
-		ret = PTR_ERR(idev->class);
-		goto err_cdev;
-	}
-
-	idev->device = device_create(idev->class, &idev->spi->dev, idev->devt,
-				     NULL, ICM20608_DEV_NAME);
-	if (IS_ERR(idev->device)) {
-		ret = PTR_ERR(idev->device);
-		goto err_class;
-	}
-	return 0;
-
-	/* 出错时按申请的相反顺序释放 */
-err_class:
-	class_destroy(idev->class);
-err_cdev:
-	cdev_del(&idev->cdev);
-err_region:
-	unregister_chrdev_region(idev->devt, 1);
-	return ret;
-}
-
-static void icm20608_cdev_unregister(struct icm20608_dev *idev)
-{
-	device_destroy(idev->class, idev->devt);
-	class_destroy(idev->class);
-	cdev_del(&idev->cdev);
-	unregister_chrdev_region(idev->devt, 1);
-}
+/* ---------- probe / remove ---------- */
 
 static int icm20608_probe(struct spi_device *spi)
 {
 	const struct of_device_id *match;
-	const struct icm20608_chip *chip;
+	struct iio_dev *indio_dev;
 	struct icm20608_dev *idev;
-	u8 id;
+	unsigned int id;
 	int ret;
 
 	match = of_match_device(icm20608_of_match, &spi->dev);
 	if (!match)
 		return -ENODEV;
-	chip = match->data;
 
 	spi->mode = SPI_MODE_0;
 	spi->bits_per_word = 8;
@@ -270,51 +246,65 @@ static int icm20608_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	ret = icm20608_read_reg(spi, ICM20608_REG_WHO_AM_I, &id);
+	/* IIO 设备和我们自己的结构体一次分配；devm_：解绑时自动释放 */
+	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*idev));
+	if (!indio_dev)
+		return -ENOMEM;
+	idev = iio_priv(indio_dev);
+	idev->spi = spi;
+	idev->chip = match->data;
+
+	idev->map = devm_regmap_init_spi(spi, &icm20608_regmap_config);
+	if (IS_ERR(idev->map)) {
+		dev_err(&spi->dev, "regmap init failed\n");
+		return PTR_ERR(idev->map);
+	}
+
+	ret = regmap_read(idev->map, ICM20608_REG_WHO_AM_I, &id);
 	if (ret) {
 		dev_err(&spi->dev, "read WHO_AM_I failed: %d\n", ret);
 		return ret;
 	}
-
-	if (id != chip->whoami) {
+	if (id != idev->chip->whoami) {
 		dev_err(&spi->dev, "WHO_AM_I = 0x%02x, expect 0x%02x for %s\n",
-			id, chip->whoami, chip->name);
+			id, idev->chip->whoami, idev->chip->name);
 		return -ENODEV;
 	}
 
-	dev_info(&spi->dev, "%s detected, WHO_AM_I = 0x%02x\n", chip->name, id);
-
-	ret = icm20608_chip_init(spi);
+	ret = icm20608_chip_init(idev);
 	if (ret) {
 		dev_err(&spi->dev, "chip init failed: %d\n", ret);
 		return ret;
 	}
-	/* devm_：设备解绑时内核自动释放，remove 里不用手动 kfree */
-	idev = devm_kzalloc(&spi->dev, sizeof(*idev), GFP_KERNEL);
-	if (!idev)
-		return -ENOMEM;
-	idev->spi = spi;
-	idev->chip = chip;
-	spi_set_drvdata(spi, idev);	/* remove 时用 spi_get_drvdata 取回 */
 
-	ret = icm20608_cdev_register(idev);
+	indio_dev->dev.parent = &spi->dev;
+	indio_dev->name = idev->chip->iio_name;
+	indio_dev->info = &icm20608_info;
+	indio_dev->modes = INDIO_DIRECT_MODE;	/* v2：只支持按需读一次 */
+	indio_dev->channels = icm20608_channels;
+	indio_dev->num_channels = ARRAY_SIZE(icm20608_channels);
+
+	spi_set_drvdata(spi, indio_dev);
+
+	/* 不用 devm_ 版本：remove 里要先注销 IIO 设备，再让芯片睡眠 */
+	ret = iio_device_register(indio_dev);
 	if (ret) {
-		dev_err(&spi->dev, "register char device failed: %d\n", ret);
+		dev_err(&spi->dev, "iio_device_register failed: %d\n", ret);
 		return ret;
 	}
 
-	dev_info(&spi->dev, "ready: /dev/%s (major %d), accel +-2g, gyro +-2000dps\n",
-		 ICM20608_DEV_NAME, MAJOR(idev->devt));
+	dev_info(&spi->dev, "%s ready as IIO device %s\n",
+		 idev->chip->name, dev_name(&indio_dev->dev));
 	return 0;
 }
 
 static int icm20608_remove(struct spi_device *spi)
 {
-	struct icm20608_dev *idev = spi_get_drvdata(spi);
+	struct iio_dev *indio_dev = spi_get_drvdata(spi);
+	struct icm20608_dev *idev = iio_priv(indio_dev);
 
-	icm20608_cdev_unregister(idev);
-	/* 让芯片回到睡眠，省电 */
-	icm20608_write_reg(spi, ICM20608_REG_PWR_MGMT_1, ICM20608_PWR1_SLEEP);
+	iio_device_unregister(indio_dev);
+	regmap_write(idev->map, ICM20608_REG_PWR_MGMT_1, ICM20608_PWR1_SLEEP);
 	dev_info(&spi->dev, "removed\n");
 	return 0;
 }
@@ -339,4 +329,4 @@ static struct spi_driver icm20608_driver = {
 module_spi_driver(icm20608_driver);
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("ICM-20608 6-axis IMU SPI driver");
+MODULE_DESCRIPTION("ICM-20608 6-axis IMU SPI/IIO driver");
