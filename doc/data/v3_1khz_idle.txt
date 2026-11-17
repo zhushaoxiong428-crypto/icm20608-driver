@@ -1,0 +1,11 @@
+# v3 首次连续采集（2026-11-17 北京时间），板子空闲，NFS 根文件系统，内核 4.1.15 #3
+# ./iio_buffer 1000 5 3
+/dev/iio:device0 (/sys/bus/iio/devices/iio:device0): 1000 Hz requested, 5.0 s
+  #0 a=(-0.075 0.177 9.867) m/s2  g=(-0.0128 -0.0032 -0.0021) rad/s  T=30.49 C  t=1733295784077015002
+  #1 a=(-0.071 0.178 9.866) m/s2  g=(-0.0128 -0.0032 -0.0021) rad/s  T=30.50 C  t=1733295784078009002
+  #2 a=(-0.066 0.175 9.860) m/s2  g=(-0.0128 -0.0032 -0.0021) rad/s  T=30.50 C  t=1733295784079005002
+samples 5006 in 5.000 s -> 1000.9 Hz
+interval us: mean 999.1  sd 2.4  min 973.0  p50 999.0  p99 1006.0  max 1021.7
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+# grep drdy /proc/interrupts
+ 41:       5006  gpio-mxc  10 Edge      icm20608-drdy
