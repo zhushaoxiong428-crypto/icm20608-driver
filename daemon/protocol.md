@@ -1,6 +1,8 @@
 # devmond 协议（版本 1）
 
-Unix 域流式套接字，默认 `/tmp/devmond.sock`（`devmond -s` 修改，界面用环境变量 `DEVMOND_SOCKET`）。
+Unix 域流式套接字，默认 `/tmp/devmond.sock`（`devmond -s` 修改，界面用环境变量 `DEVMOND_SOCKET`）；
+`devmond -t 9100` 时同一协议再监听 TCP 端口，供远程访问（`devmonctl -H 板子IP`，界面用 `DEVMOND_ADDR=IP:9100`）。
+TCP 没有认证和加密，只在可信的局域网中使用。
 一行一条消息，以 `\n` 结尾，UTF-8。格式：`类型 key=value key=value ...`；
 `msg=` 若出现总在行尾，其值可以包含空格。最多 8 个客户端同时连接。
 
@@ -25,7 +27,7 @@ REC state=off dir=/device-management/records
 | --- | --- | --- |
 | `AP ir= als= lux= ps= flags=` | 每个采集周期、`READ` 后 | 原始值；`lux` = als × in_illuminance_scale；`flags` 位 1/2/4 = IR/ALS/PS 有效（IR 溢出时 IR、PS 无效） |
 | `IMU n= rate= ax= ay= az= gx= gy= gz= temp=` | 每个采集周期 | 本周期 n 个样本的平均值，g / dps / °C；`rate` 按内核时间戳计算 |
-| `SYS cpu= self_cpu= mem_used= mem_total= load= uptime= temp= rx= tx= disk_free= disk_total=` | 每个采集周期 | CPU %（与上周期的差值）与 devmond 自身 %（最近 10 个周期的平均，节拍分辨率所限）、内存 MB、1 分钟负载、运行秒数、SoC 温度 °C（无传感器时 -273）、除 lo 外网卡收发 KB/s、录制目录所在文件系统 MB（不可用时 -1） |
+| `SYS cpu= self_cpu= mem_used= mem_total= load= uptime= temp= rx= tx= disk_free= disk_total= time= ntp=` | 每个采集周期 | CPU %（与上周期的差值）与 devmond 自身 %（最近 10 个周期的平均，节拍分辨率所限）、内存 MB、1 分钟负载、运行秒数、SoC 温度 °C（无传感器时 -273）、除 lo 外网卡收发 KB/s、录制目录所在文件系统 MB（不可用时 -1）、板子当前时间（CLOCK_REALTIME 毫秒）、内核时钟是否已被 NTP 校准（adjtimex 无 STA_UNSYNC 为 1） |
 | `PROX state=near\|far count= ts=` | AP_INT 接近中断 | `ts` 为驱动在中断上半部记录的 CLOCK_REALTIME 纳秒；连接时补发的当前状态不带 `ts` |
 | `LED state=on\|off\|unavailable auto=0\|1` | LED 或自动模式变化 | |
 | `KEY state=ready\|pressed\|released\|unavailable` | 按键 | 手动模式下按下会翻转 LED |

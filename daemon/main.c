@@ -309,10 +309,12 @@ static void publish_sys(struct app *a)
 	sysmon_sample(&a->sysmon, a->records_dir, &s);
 	server_broadcast(a->srv,
 			 "SYS cpu=%.1f self_cpu=%.2f mem_used=%.1f mem_total=%.1f load=%.2f "
-			 "uptime=%ld temp=%.1f rx=%.1f tx=%.1f disk_free=%.0f disk_total=%.0f",
+			 "uptime=%ld temp=%.1f rx=%.1f tx=%.1f disk_free=%.0f disk_total=%.0f "
+			 "time=%lld ntp=%d",
 			 s.cpu_pct, s.self_cpu_pct, s.mem_used_mb, s.mem_total_mb, s.load1,
 			 s.uptime_s, s.temp_ok ? s.temp_c : -273.0, s.rx_kbps, s.tx_kbps,
-			 s.disk_ok ? s.disk_free_mb : -1.0, s.disk_ok ? s.disk_total_mb : -1.0);
+			 s.disk_ok ? s.disk_free_mb : -1.0, s.disk_ok ? s.disk_total_mb : -1.0,
+			 (long long)(realtime_ns() / 1000000), s.clock_synced);
 }
 
 static void on_tick(struct app *a)
@@ -578,8 +580,9 @@ static void exe_dir(char *out, size_t len)
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"usage: %s [-d] [-l log] [-s socket] [-c config.ini] [-r records_dir] [-p pidfile]\n"
+		"usage: %s [-d] [-l log] [-s socket] [-t port] [-c config.ini] [-r records_dir] [-p pidfile]\n"
 		"  -d  run as a daemon (log to -l, default /tmp/devmond.log)\n"
+		"  -t  also listen on TCP port for remote clients (same protocol, no auth: LAN only)\n"
 		"  defaults: socket %s, pidfile %s, config and records next to the executable\n",
 		prog, DEVMOND_DEFAULT_SOCKET, DEVMOND_DEFAULT_PIDFILE);
 }
@@ -593,6 +596,7 @@ int main(int argc, char *argv[])
 	const char *log_path = "/tmp/devmond.log";
 	char dir[PATH_MAX], key_path[64], err[ERRLEN];
 	bool daemon_mode = false;
+	int tcp_port = 0;
 	sigset_t mask;
 	int opt, pid_fd, ret;
 
@@ -600,11 +604,12 @@ int main(int argc, char *argv[])
 	snprintf(a->config_path, sizeof(a->config_path), "%s/device_monitor.ini", dir);
 	snprintf(a->records_dir, sizeof(a->records_dir), "%s/records", dir);
 
-	while ((opt = getopt(argc, argv, "dl:s:c:r:p:h")) != -1) {
+	while ((opt = getopt(argc, argv, "dl:s:t:c:r:p:h")) != -1) {
 		switch (opt) {
 		case 'd': daemon_mode = true; break;
 		case 'l': log_path = optarg; break;
 		case 's': socket_path = optarg; break;
+		case 't': tcp_port = atoi(optarg); break;
 		case 'c': snprintf(a->config_path, sizeof(a->config_path), "%s", optarg); break;
 		case 'r': snprintf(a->records_dir, sizeof(a->records_dir), "%s", optarg); break;
 		case 'p': pid_path = optarg; break;
@@ -642,6 +647,8 @@ int main(int argc, char *argv[])
 	     ret == 0 ? "loaded" : ret > 0 ? "not found, using defaults" : "invalid, using defaults");
 
 	if (server_open(&a->srv, a->epfd, socket_path, on_command, on_connect, a))
+		return 1;
+	if (tcp_port > 0 && server_listen_tcp(a->srv, tcp_port))
 		return 1;
 
 	/* 设备打开失败不退出：界面能看到具体哪个设备出错，其余功能照常 */
@@ -681,7 +688,8 @@ int main(int argc, char *argv[])
 	timer_set(a->tick_fd, a->cfg.interval_ms);
 	timer_set(a->drain_fd, 1000 / IMU_DRAINS_PER_SEC);
 
-	dlog("running, socket %s, key %s", socket_path, a->key_fd >= 0 ? key_path : "-");
+	dlog("running, socket %s, tcp %d, key %s", socket_path, tcp_port,
+	     a->key_fd >= 0 ? key_path : "-");
 	a->running = true;
 	while (a->running) {
 		struct epoll_event events[16];

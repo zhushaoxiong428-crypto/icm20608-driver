@@ -60,7 +60,7 @@ void MainWindow::onConnectionChanged(bool connected, const QString &reason)
 {
 	setControlsEnabled(connected);
 	if (connected) {
-		ui->statusbar->showMessage("Connected to devmond", 3000);
+		ui->statusbar->showMessage("Connected to devmond at " + client->address(), 3000);
 		return;
 	}
 

@@ -7,6 +7,8 @@
  * - 慢客户端保护：输出队列超过 OUT_MAX 就断开它，不让一个卡住的界面拖住采集
  * - 断开采用延迟回收：先标记 dead，等当前回调链结束再 close/free，
  *   避免在处理某个客户端的命令时（命令里可能广播）把它自己释放掉
+ * - 可同时监听 Unix 套接字（本机界面）和 TCP（远程访问，协议相同）；
+ *   TCP 连接打开 TCP_NODELAY（命令应答不等 Nagle）和 keepalive（网线拔掉后约 1 分钟发现对端已失联）
  */
 #include "devmond.h"
 
@@ -14,6 +16,9 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -25,6 +30,7 @@
 
 struct client {
 	int fd;
+	char peer[48];		/* "local" 或 TCP 对端 IP:端口，用于日志 */
 	bool dead;
 	bool want_out;
 	char in[IN_MAX];
@@ -35,8 +41,14 @@ struct client {
 	struct client *next;
 };
 
-struct server {
+struct listener {
 	int fd;
+	bool tcp;
+};
+
+struct server {
+	struct listener listeners[2];	/* [0] Unix 套接字，[1] 可选 TCP */
+	int nlisteners;
 	int epfd;
 	int busy;		/* >0 时正在回调中，推迟回收 */
 	char path[108];
@@ -144,7 +156,7 @@ static void reap(struct server *srv)
 		free(c->out);
 		free(c);
 		srv->nclients--;
-		dlog("client disconnected (%d left)", srv->nclients);
+		dlog("client %s disconnected (%d left)", c->peer, srv->nclients);
 	}
 }
 
@@ -167,12 +179,26 @@ int server_client_count(const struct server *srv)
 	return srv->nclients;
 }
 
-static void accept_clients(struct server *srv)
+static void tune_tcp(int fd)
+{
+	int on = 1, idle = 30, interval = 10, count = 3;
+
+	setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
+	setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
+	setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+	setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &interval, sizeof(interval));
+	setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &count, sizeof(count));
+}
+
+static void accept_clients(struct server *srv, struct listener *l)
 {
 	for (;;) {
 		struct epoll_event ev = { .events = EPOLLIN | EPOLLRDHUP };
+		struct sockaddr_in peer;
+		socklen_t peer_len = sizeof(peer);
 		struct client *c;
-		int fd = accept4(srv->fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
+		int fd = accept4(l->fd, l->tcp ? (struct sockaddr *)&peer : NULL,
+				 l->tcp ? &peer_len : NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
 
 		if (fd < 0) {
 			if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
@@ -187,6 +213,15 @@ static void accept_clients(struct server *srv)
 			continue;
 		}
 		c->fd = fd;
+		if (l->tcp) {
+			char ip[INET_ADDRSTRLEN] = "?";
+
+			inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
+			snprintf(c->peer, sizeof(c->peer), "%s:%u", ip, ntohs(peer.sin_port));
+			tune_tcp(fd);
+		} else {
+			snprintf(c->peer, sizeof(c->peer), "local");
+		}
 		ev.data.ptr = c;
 		if (epoll_ctl(srv->epfd, EPOLL_CTL_ADD, fd, &ev)) {
 			close(fd);
@@ -196,7 +231,7 @@ static void accept_clients(struct server *srv)
 		c->next = srv->clients;
 		srv->clients = c;
 		srv->nclients++;
-		dlog("client connected (%d total)", srv->nclients);
+		dlog("client %s connected (%d total)", c->peer, srv->nclients);
 		if (srv->on_connect)
 			srv->on_connect(srv, c, srv->ctx);
 	}
@@ -244,10 +279,13 @@ static void client_read(struct server *srv, struct client *c)
 bool server_dispatch(struct server *srv, void *ptr, uint32_t events)
 {
 	struct client *c;
+	int i;
 
-	if (ptr == srv) {
-		accept_clients(srv);
-		return true;
+	for (i = 0; i < srv->nlisteners; i++) {
+		if (ptr == &srv->listeners[i]) {
+			accept_clients(srv, &srv->listeners[i]);
+			return true;
+		}
 	}
 	for (c = srv->clients; c && c != ptr; c = c->next)
 		;
@@ -287,31 +325,66 @@ int server_open(struct server **out, int epfd, const char *path,
 	snprintf(srv->path, sizeof(srv->path), "%s", path);
 	strcpy(addr.sun_path, path);
 
-	srv->fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-	if (srv->fd < 0) {
+	srv->listeners[0].fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+	if (srv->listeners[0].fd < 0) {
 		dlog("socket: %s", strerror(errno));
 		free(srv);
 		return -1;
 	}
 	/* 调用方已用 pid 文件锁保证只有一个实例，这里删除上次异常退出遗留的套接字文件 */
 	unlink(path);
-	if (bind(srv->fd, (struct sockaddr *)&addr, sizeof(addr)) || listen(srv->fd, 4)) {
+	if (bind(srv->listeners[0].fd, (struct sockaddr *)&addr, sizeof(addr)) || listen(srv->listeners[0].fd, 4)) {
 		dlog("bind/listen %s: %s", path, strerror(errno));
-		close(srv->fd);
+		close(srv->listeners[0].fd);
 		free(srv);
 		return -1;
 	}
-	ev.data.ptr = srv;
-	if (epoll_ctl(epfd, EPOLL_CTL_ADD, srv->fd, &ev)) {
+	ev.data.ptr = &srv->listeners[0];
+	if (epoll_ctl(epfd, EPOLL_CTL_ADD, srv->listeners[0].fd, &ev)) {
 		dlog("epoll add listen fd: %s", strerror(errno));
-		close(srv->fd);
+		close(srv->listeners[0].fd);
 		unlink(path);
 		free(srv);
 		return -1;
 	}
+	srv->nlisteners = 1;
 	*out = srv;
 	return 0;
 }
+
+/* 远程访问：同一协议再监听一个 TCP 端口（局域网用，无认证） */
+int server_listen_tcp(struct server *srv, int port)
+{
+	struct sockaddr_in addr = {
+		.sin_family = AF_INET,
+		.sin_port = htons(port),
+		.sin_addr.s_addr = htonl(INADDR_ANY),
+	};
+	struct listener *l = &srv->listeners[srv->nlisteners];
+	struct epoll_event ev = { .events = EPOLLIN, .data.ptr = l };
+	int on = 1;
+
+	if (srv->nlisteners >= (int)(sizeof(srv->listeners) / sizeof(srv->listeners[0])))
+		return -1;
+	l->tcp = true;
+	l->fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+	if (l->fd < 0) {
+		dlog("tcp socket: %s", strerror(errno));
+		return -1;
+	}
+	/* 重启时不必等 TIME_WAIT 结束 */
+	setsockopt(l->fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+	if (bind(l->fd, (struct sockaddr *)&addr, sizeof(addr)) || listen(l->fd, 4)
+	    || epoll_ctl(srv->epfd, EPOLL_CTL_ADD, l->fd, &ev)) {
+		dlog("tcp port %d: %s", port, strerror(errno));
+		close(l->fd);
+		return -1;
+	}
+	srv->nlisteners++;
+	return 0;
+}
+
+
 
 void server_close(struct server *srv)
 {
@@ -323,8 +396,14 @@ void server_close(struct server *srv)
 		c->dead = true;
 	srv->busy = 0;
 	reap(srv);
-	epoll_ctl(srv->epfd, EPOLL_CTL_DEL, srv->fd, NULL);
-	close(srv->fd);
+	{
+		int i;
+
+		for (i = 0; i < srv->nlisteners; i++) {
+			epoll_ctl(srv->epfd, EPOLL_CTL_DEL, srv->listeners[i].fd, NULL);
+			close(srv->listeners[i].fd);
+		}
+	}
 	unlink(srv->path);
 	free(srv);
 }

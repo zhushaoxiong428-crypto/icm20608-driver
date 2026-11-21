@@ -1,31 +1,79 @@
 #include "daemonclient.h"
 
+#include <QLocalSocket>
+#include <QNetworkProxy>
+#include <QStringList>
+#include <QTcpSocket>
 #include <QTimer>
 
 DaemonClient::DaemonClient(QObject *parent)
 	: QObject(parent)
-	, socket(new QLocalSocket(this))
+	, local(nullptr)
+	, tcp(nullptr)
+	, io(nullptr)
 	, retryTimer(new QTimer(this))
+	, port(0)
 {
-	const QByteArray env = qgetenv("DEVMOND_SOCKET");
-	path = env.isEmpty() ? QString("/tmp/devmond.sock") : QString::fromLocal8Bit(env);
-
 	retryTimer->setInterval(1000);
 	retryTimer->setSingleShot(true);
-
-	connect(socket, &QLocalSocket::connected, this, &DaemonClient::onConnected);
-	connect(socket, &QLocalSocket::disconnected, this, &DaemonClient::onDisconnected);
-	connect(socket, &QLocalSocket::readyRead, this, &DaemonClient::onReadyRead);
-	connect(socket, &QLocalSocket::stateChanged, this, &DaemonClient::onStateChanged);
-	/* 板子是 Qt 5.12（只有 error 信号），主机预览可能是 5.15（改名为 errorOccurred） */
-#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
-	connect(socket, &QLocalSocket::errorOccurred, this, &DaemonClient::onError);
-#else
-	connect(socket,
-		static_cast<void (QLocalSocket::*)(QLocalSocket::LocalSocketError)>(&QLocalSocket::error),
-		this, &DaemonClient::onError);
-#endif
 	connect(retryTimer, &QTimer::timeout, this, &DaemonClient::reconnect);
+
+	/*
+	 * 重连只看状态变成“未连接”：Qt 5.12 连接失败时先发 error 信号、之后才改状态，
+	 * 在 error 槽里判断状态会漏掉重连（守护进程不在时界面一直连不回去）
+	 */
+	const QString remote = QString::fromLocal8Bit(qgetenv("DEVMOND_ADDR"));
+	if (!remote.isEmpty()) {
+		const int colon = remote.lastIndexOf(':');
+		host = colon > 0 ? remote.left(colon) : remote;
+		port = colon > 0 ? remote.mid(colon + 1).toUShort() : 9100;
+		addressText = QString("%1:%2").arg(host).arg(port);
+
+		tcp = new QTcpSocket(this);
+		/*
+		 * 直连局域网里的设备，不走代理：Qt 会读取 ALL_PROXY 等环境变量，
+		 * PC 上开着代理时连接被转给本机代理端口，代理不转发到局域网地址，表现为 "Remote host closed"
+		 */
+		tcp->setProxy(QNetworkProxy::NoProxy);
+		io = tcp;
+		connect(tcp, &QTcpSocket::connected, this, &DaemonClient::onConnected);
+		connect(tcp, &QTcpSocket::disconnected, this, &DaemonClient::onDisconnected);
+		connect(tcp, &QTcpSocket::stateChanged, this, [this](QAbstractSocket::SocketState s) {
+			if (s == QAbstractSocket::UnconnectedState) {
+				onUnconnected();
+			}
+		});
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+		connect(tcp, &QTcpSocket::errorOccurred, this, &DaemonClient::onError);
+#else
+		connect(tcp, static_cast<void (QAbstractSocket::*)(QAbstractSocket::SocketError)>(
+				     &QAbstractSocket::error),
+			this, &DaemonClient::onError);
+#endif
+	} else {
+		const QByteArray env = qgetenv("DEVMOND_SOCKET");
+		path = env.isEmpty() ? QString("/tmp/devmond.sock") : QString::fromLocal8Bit(env);
+		addressText = path;
+
+		local = new QLocalSocket(this);
+		io = local;
+		connect(local, &QLocalSocket::connected, this, &DaemonClient::onConnected);
+		connect(local, &QLocalSocket::disconnected, this, &DaemonClient::onDisconnected);
+		connect(local, &QLocalSocket::stateChanged, this, [this](QLocalSocket::LocalSocketState s) {
+			if (s == QLocalSocket::UnconnectedState) {
+				onUnconnected();
+			}
+		});
+		/* 板子是 Qt 5.12（只有 error 信号），主机可能是 5.15（改名为 errorOccurred） */
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+		connect(local, &QLocalSocket::errorOccurred, this, &DaemonClient::onError);
+#else
+		connect(local, static_cast<void (QLocalSocket::*)(QLocalSocket::LocalSocketError)>(
+				       &QLocalSocket::error),
+			this, &DaemonClient::onError);
+#endif
+	}
+	connect(io, &QIODevice::readyRead, this, &DaemonClient::onReadyRead);
 }
 
 void DaemonClient::start()
@@ -35,21 +83,29 @@ void DaemonClient::start()
 
 bool DaemonClient::isConnected() const
 {
-	return socket->state() == QLocalSocket::ConnectedState;
+	return tcp ? tcp->state() == QAbstractSocket::ConnectedState
+		   : local->state() == QLocalSocket::ConnectedState;
 }
 
 void DaemonClient::send(const QString &command)
 {
 	if (isConnected()) {
-		socket->write(command.toUtf8() + '\n');
+		io->write(command.toUtf8() + '\n');
 	}
 }
 
 void DaemonClient::reconnect()
 {
-	if (socket->state() == QLocalSocket::UnconnectedState) {
-		socket->connectToServer(path);
+	if (tcp && tcp->state() == QAbstractSocket::UnconnectedState) {
+		tcp->connectToHost(host, port);
+	} else if (local && local->state() == QLocalSocket::UnconnectedState) {
+		local->connectToServer(path);
 	}
+}
+
+void DaemonClient::onUnconnected()
+{
+	retryTimer->start();
 }
 
 void DaemonClient::onConnected()
@@ -63,22 +119,11 @@ void DaemonClient::onDisconnected()
 	emit connectionChanged(false, "devmond disconnected");
 }
 
-/*
- * 重连只看状态：Qt 5.12 的 QLocalSocket 连接失败时先发 error 信号、之后才把状态改成
- * UnconnectedState，在 error 槽里判断状态会漏掉重连（守护进程不在时界面一直连不回去）
- */
-void DaemonClient::onStateChanged(QLocalSocket::LocalSocketState state)
+void DaemonClient::onError()
 {
-	if (state == QLocalSocket::UnconnectedState) {
-		retryTimer->start();
-	}
-}
-
-void DaemonClient::onError(QLocalSocket::LocalSocketError error)
-{
-	Q_UNUSED(error);
-	/* 连不上（守护进程没运行）时只报告一次原因，之后安静地重试 */
-	const QString reason = QString("devmond not reachable at %1: %2").arg(path, socket->errorString());
+	/* 连不上时只报告一次原因，之后安静地重试 */
+	const QString reason = QString("devmond not reachable at %1: %2")
+		.arg(addressText, io->errorString());
 	if (reason != lastReason) {
 		lastReason = reason;
 		emit connectionChanged(false, reason);
@@ -87,8 +132,8 @@ void DaemonClient::onError(QLocalSocket::LocalSocketError error)
 
 void DaemonClient::onReadyRead()
 {
-	while (socket->canReadLine()) {
-		const QString line = QString::fromUtf8(socket->readLine()).trimmed();
+	while (io->canReadLine()) {
+		const QString line = QString::fromUtf8(io->readLine()).trimmed();
 		if (line.isEmpty()) {
 			continue;
 		}

@@ -16,6 +16,7 @@
 #define DEVMOND_PROTO_VERSION	1
 #define DEVMOND_DEFAULT_SOCKET	"/tmp/devmond.sock"
 #define DEVMOND_DEFAULT_PIDFILE	"/tmp/devmond.pid"
+#define DEVMOND_DEFAULT_TCP_PORT	9100
 
 #define ERRLEN			160
 
@@ -155,6 +156,7 @@ struct sysmon_sample {
 	double rx_kbps, tx_kbps;	/* KB/s */
 	double disk_free_mb, disk_total_mb;
 	bool disk_ok;
+	bool clock_synced;		/* 内核时钟已被 NTP 校准（adjtimex 无 STA_UNSYNC） */
 };
 
 void sysmon_init(struct sysmon *m);
@@ -169,6 +171,7 @@ typedef void (*connect_cb)(struct server *srv, struct client *c, void *ctx);
 
 int server_open(struct server **out, int epfd, const char *path,
 		command_cb on_command, connect_cb on_connect, void *ctx);
+int server_listen_tcp(struct server *srv, int port);
 void server_close(struct server *srv);
 /* epoll 返回的 data.ptr 属于 server（监听或客户端）时处理并返回 true */
 bool server_dispatch(struct server *srv, void *ptr, uint32_t events);

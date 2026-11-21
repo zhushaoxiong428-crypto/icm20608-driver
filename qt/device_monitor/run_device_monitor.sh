@@ -4,10 +4,16 @@
 #       TOUCH=evdev ./run_device_monitor.sh    触摸走 Qt 自带 evdevtouch（支持多点，不需要 tslib）
 #       ./run_device_monitor.sh --daemon-only  只启动 devmond（无屏幕运行、或界面稍后再开）
 # devmond 已在运行时不会重复启动（pid 文件锁）；界面退出后采集与录制继续，停止用 kill $(pidof devmond)
+# 环境变量：TZ（默认 CST-8 北京时间）、NTP_SERVER（默认 192.168.10.1，即 TFTP/NFS 服务器）、
+#           DEVMOND_TCP_PORT（默认 9100，0 关闭远程访问）
 # 约定路径（与正点原子《移植Qt5.12.9》一致）：Qt 在 /usr/lib/arm-qt，tslib 在 /usr/lib/arm-tslib，
 # 字体在 /usr/share/fonts；本脚本、驱动 .ko 与 device_monitor 放在同一目录
 
 cd "$(dirname "$0")" || exit 1
+
+# 本地时区（POSIX 格式，busybox 没有时区数据库）：CSV、日志、界面按北京时间显示；
+# 内核时钟、NTP 和 RTC 一律用 UTC，只有显示和记录换算成本地时间
+export TZ=${TZ:-CST-8}
 
 # 1. 加载驱动（已加载的跳过）。ap3216c.ko、icm20608.ko 为 IIO 驱动（drivers/、icm20608-driver/）
 for m in led_drv key_drv ap3216c icm20608 gt911_drv; do
@@ -17,15 +23,25 @@ for m in led_drv key_drv ap3216c icm20608 gt911_drv; do
 done
 sleep 1
 
-# 2. 采集守护进程：传感器、LED、按键、自动亮灯、参数和 CSV 录制都在这里
+# 2. 校时：busybox ntpd 向 NTP 服务器同步，每次校准后由 ntp_event.sh 写入 SNVS RTC，
+#    断网重启时内核从 RTC 恢复时间（需要底板装纽扣电池才能断电保持）
+NTP_SERVER=${NTP_SERVER:-192.168.10.1}
+if ! pidof ntpd > /dev/null; then
+	ntpd -p "$NTP_SERVER" -S "$PWD/ntp_event.sh" && echo "ntpd started, server $NTP_SERVER"
+fi
+
+# 3. 采集守护进程：传感器、LED、按键、自动亮灯、参数和 CSV 录制都在这里；
+#    -t 同一协议再监听 TCP 端口供远程访问（局域网使用，无认证）
+DEVMOND_TCP_PORT=${DEVMOND_TCP_PORT:-9100}
 if pidof devmond > /dev/null; then
 	echo "devmond already running (pid $(pidof devmond))"
 else
-	./devmond -d -l /tmp/devmond.log && echo "devmond started, log /tmp/devmond.log"
+	./devmond -d -l /tmp/devmond.log -t "$DEVMOND_TCP_PORT" \
+		&& echo "devmond started, log /tmp/devmond.log, tcp port $DEVMOND_TCP_PORT"
 fi
 [ "$1" = "--daemon-only" ] && exit 0
 
-# 3. 按 input 设备名查找触摸屏节点：eventX 编号随驱动加载顺序变化，不能写死
+# 4. 按 input 设备名查找触摸屏节点：eventX 编号随驱动加载顺序变化，不能写死
 find_event() {
 	for d in /sys/class/input/event*; do
 		if [ "$(cat "$d/device/name" 2>/dev/null)" = "$1" ]; then
@@ -39,7 +55,7 @@ find_event() {
 TOUCH_DEV=$(find_event gt911) || echo "touch device (gt911) not found"
 echo "touch: ${TOUCH_DEV:-none}"
 
-# 4. Qt 运行环境
+# 5. Qt 运行环境
 export QT_ROOT=/usr/lib/arm-qt
 export QT_QPA_PLATFORM_PLUGIN_PATH=$QT_ROOT/plugins
 export QT_PLUGIN_PATH=$QT_ROOT/plugins
@@ -69,7 +85,7 @@ else
 	export QT_QPA_FB_TSLIB=1
 fi
 
-# 5. 取消屏幕消隐、关掉控制台光标闪烁
+# 6. 取消屏幕消隐、关掉控制台光标闪烁
 echo 0 > /sys/class/graphics/fb0/blank
 echo 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null
 

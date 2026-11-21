@@ -4,8 +4,10 @@
  *   devmonctl STATUS                 打印当前状态
  *   devmonctl LED on|off|toggle      其他命令见 protocol.md，只打印应答行（-v 打印全部）
  *   devmonctl watch [秒数] [类型...]   打印推送的消息，例如 watch 10 AP PROX
+ *   devmonctl -H 192.168.10.50[:9100] ...  通过 TCP 远程连接（devmond -t 9100）
  */
 #include <errno.h>
+#include <netdb.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -57,15 +59,18 @@ int main(int argc, char *argv[])
 {
 	struct sockaddr_un addr = { .sun_family = AF_UNIX };
 	const char *path = DEVMOND_DEFAULT_SOCKET;
+	const char *remote = NULL;
 	bool verbose = false, watch;
 	char buf[4096], cmd[64] = "";
 	size_t len = 0;
 	double deadline;
 	int fd, opt, i, status = 1;
 
-	while ((opt = getopt(argc, argv, "s:vh")) != -1) {
+	while ((opt = getopt(argc, argv, "s:H:vh")) != -1) {
 		if (opt == 's')
 			path = optarg;
+		else if (opt == 'H')
+			remote = optarg;
 		else if (opt == 'v')
 			verbose = true;
 		else
@@ -74,11 +79,32 @@ int main(int argc, char *argv[])
 	if (optind >= argc)
 		goto usage;
 
-	fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-	snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
-	if (fd < 0 || connect(fd, (struct sockaddr *)&addr, sizeof(addr))) {
-		fprintf(stderr, "connect %s: %s (is devmond running?)\n", path, strerror(errno));
-		return 1;
+	if (remote) {
+		struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM }, *ai;
+		char host[128], port[16];
+		const char *colon = strrchr(remote, ':');
+
+		snprintf(host, sizeof(host), "%.*s", colon ? (int)(colon - remote) : (int)strlen(remote),
+			 remote);
+		snprintf(port, sizeof(port), "%s", colon ? colon + 1 : "9100");
+		if (getaddrinfo(host, port, &hints, &ai)) {
+			fprintf(stderr, "cannot resolve %s\n", remote);
+			return 1;
+		}
+		fd = socket(ai->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+		if (fd < 0 || connect(fd, ai->ai_addr, ai->ai_addrlen)) {
+			fprintf(stderr, "connect %s:%s: %s (devmond started with -t?)\n", host, port,
+				strerror(errno));
+			return 1;
+		}
+		freeaddrinfo(ai);
+	} else {
+		fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+		snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
+		if (fd < 0 || connect(fd, (struct sockaddr *)&addr, sizeof(addr))) {
+			fprintf(stderr, "connect %s: %s (is devmond running?)\n", path, strerror(errno));
+			return 1;
+		}
 	}
 
 	watch = !strcmp(argv[optind], "watch");
@@ -148,8 +174,8 @@ done:
 
 usage:
 	fprintf(stderr,
-		"usage: %s [-s socket] [-v] COMMAND [ARGS]\n"
-		"       %s [-s socket] watch [seconds] [TYPE...]\n"
+		"usage: %s [-s socket | -H host[:port]] [-v] COMMAND [ARGS]\n"
+		"       %s [-s socket | -H host[:port]] watch [seconds] [TYPE...]\n"
 		"commands: PING STATUS LED on|off|toggle AUTO on|off READ REC start|stop\n"
 		"          CONFIG on=N off=N interval=MS\n",
 		argv[0], argv[0]);

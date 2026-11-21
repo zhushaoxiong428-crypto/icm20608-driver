@@ -24,6 +24,7 @@
 | GT911 / GT1158 | I²C 通信、线程化中断、最多 5 个触点的多点触摸上报；兼容 GT9147 / GT1151 / GT1158（ATK-4384 屏为 GT1158） |
 | UART3 | 使用 BSP 串口驱动进行 115200、8N1 收发回环测试 |
 | Qt 界面 | Monitor / System / Settings / Record 四页（小屏布局），数据刷新、设备状态和错误提示 |
+| 网络与时间 | `devmond -t 9100` 同一协议监听 TCP，PC 上 `devmonctl -H 板子IP` 或同一 Qt 界面（`DEVMOND_ADDR=IP:9100`）远程查看与控制；busybox `ntpd` 向主机校时，校准后写入 SNVS RTC，界面显示同步状态；本地时区北京时间 |
 | 系统监控 | CPU（及 devmond 自身）、内存、负载、运行时间、SoC 温度、网络收发速率、录制目录剩余空间，最近 120 个周期的 CPU / 温度曲线 |
 | 自动控制 | ALS 双阈值控制 LED，支持手动／自动切换 |
 | 参数设置 | 修改光照阈值和采集间隔，由 devmond 校验并原子写回 ini |
@@ -235,6 +236,19 @@ echo 6 > /sys/class/backlight/backlight/brightness
 - 勾选 `Auto LED` 后，手动 LED 按钮禁用，实体按键只显示按下／松开状态。
 - 自动模式使用 ALS 原始数值判断：小于等于开灯阈值时开灯，大于等于关灯阈值时关灯，中间保持当前状态。
 - ALS 无效或读取失败时不进行自动判断，保持 LED 当前状态。
+
+### 网络与时间
+
+- **校时**：启动脚本运行 `ntpd -p $NTP_SERVER -S ntp_event.sh`（默认服务器 192.168.10.1，即 TFTP/NFS 主机），每次校准后 `ntp_event.sh` 执行 `hwclock -w -u` 写入 i.MX6ULL 的 SNVS RTC，断网重启时内核从 RTC 恢复时间（断电保持需要底板装纽扣电池）。内核时钟、NTP、RTC 一律 UTC，只有显示和 CSV 按 `TZ=CST-8` 换算。System 页显示板子时间和同步状态（`adjtimex()` 的 `STA_UNSYNC`）：busybox ntpd 先步进校时，约几分钟后进入 PLL 模式才清除该标志。`devmond` 的定时器都用 `CLOCK_MONOTONIC`，校时造成的时间跳变（实测一次跳了 717 天）不影响采集周期。
+- **主机作为 NTP 服务器**（板子没有外网时）：
+
+  ```sh
+  sudo apt install -y chrony
+  printf 'allow 192.168.10.0/24\nlocal stratum 10\n' | sudo tee /etc/chrony/conf.d/devboard.conf
+  sudo systemctl restart chrony
+  ```
+
+- **远程访问**：`devmond -t 9100`（启动脚本默认开启，`DEVMOND_TCP_PORT=0` 关闭）。PC 上 `devmonctl -H 192.168.10.50 watch`，或在 PC 上用主机 Qt 编译同一个界面后 `DEVMOND_ADDR=192.168.10.50:9100 ./device_monitor`。TCP 连接开启 `TCP_NODELAY` 与 keepalive（断网约 1 分钟后释放连接）；界面的 TCP 连接不走代理（PC 上的 `ALL_PROXY` 会让 `QTcpSocket` 连到本机代理，代理不转发局域网地址，表现为 "Remote host closed"）。协议没有认证，只在可信局域网使用。
 
 ### System
 

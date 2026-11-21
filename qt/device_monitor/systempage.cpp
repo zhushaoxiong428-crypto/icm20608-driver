@@ -1,5 +1,6 @@
 #include "systempage.h"
 
+#include <QDateTime>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -62,13 +63,17 @@ void HistoryChart::paintEvent(QPaintEvent *event)
 		p.setPen(kGridColor);
 	}
 
+	const qreal tempX = plot.left() + fm.horizontalAdvance("CPU %") + 16;
+	const QString span = QString("last %1 samples").arg(kMaxPoints);
 	p.setPen(kCpuColor);
 	p.drawText(QPointF(plot.left(), fm.ascent()), "CPU %");
 	p.setPen(kTempColor);
-	p.drawText(QPointF(plot.left() + fm.horizontalAdvance("CPU %") + 16, fm.ascent()), "SoC C");
-	p.setPen(kTextColor);
-	p.drawText(QRectF(plot.left(), 0, plot.width(), legend), Qt::AlignRight,
-		QString("last %1 samples").arg(kMaxPoints));
+	p.drawText(QPointF(tempX, fm.ascent()), "SoC C");
+	/* 窄屏时放不下就不画，避免与图例重叠 */
+	if (tempX + fm.horizontalAdvance("SoC C") + 16 + fm.horizontalAdvance(span) <= plot.right()) {
+		p.setPen(kTextColor);
+		p.drawText(QRectF(plot.left(), 0, plot.width(), legend), Qt::AlignRight, span);
+	}
 
 	const auto drawSeries = [&](const QVector<double> &data, const QColor &color) {
 		if (data.size() < 2) {
@@ -117,6 +122,7 @@ SystemPage::SystemPage(QWidget *parent)
 	, tempLabel(new QLabel)
 	, netLabel(new QLabel)
 	, diskLabel(new QLabel)
+	, timeLabel(new QLabel)
 	, chart(new HistoryChart)
 {
 	/* 与其他标签页同样的深色背景（普通 QWidget 需要 WA_StyledBackground 才会画样式表背景） */
@@ -126,7 +132,7 @@ SystemPage::SystemPage(QWidget *parent)
 
 	QGroupBox *stats = new QGroupBox("Resources");
 	QVBoxLayout *statsLayout = new QVBoxLayout(stats);
-	for (QLabel *label : { cpuLabel, memLabel, loadLabel, tempLabel, netLabel, diskLabel }) {
+	for (QLabel *label : { timeLabel, cpuLabel, memLabel, loadLabel, tempLabel, netLabel, diskLabel }) {
 		statsLayout->addWidget(label);
 	}
 	statsLayout->addStretch(1);
@@ -151,6 +157,8 @@ void SystemPage::setOffline()
 	tempLabel->setText("SoC: --");
 	netLabel->setText("NET: --");
 	diskLabel->setText("DISK: --");
+	timeLabel->setText("TIME: --");
+	timeLabel->setStyleSheet(kNormal);
 	chart->clear();
 }
 
@@ -185,6 +193,13 @@ void SystemPage::updateStats(const QHash<QString, QString> &f)
 	} else {
 		diskLabel->setText("DISK: n/a");
 	}
+
+	/* 板子的系统时间（远程连接时按本机时区显示）；未经 NTP 校准时标黄提醒 */
+	const bool synced = f.value("ntp") == "1";
+	timeLabel->setText(QString("TIME: %1  %2")
+		.arg(QDateTime::fromMSecsSinceEpoch(f.value("time").toLongLong()).toString("yyyy-MM-dd HH:mm:ss"),
+			synced ? "NTP ok" : "not synced"));
+	timeLabel->setStyleSheet(synced ? kNormal : "color: #dcdcaa;");
 
 	chart->append(cpu, tempOk ? temp : 0.0);
 }

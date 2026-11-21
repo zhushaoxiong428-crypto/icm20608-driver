@@ -47,6 +47,7 @@ private:
 	QLabel *tempLabel;
 	QLabel *netLabel;
 	QLabel *diskLabel;
+	QLabel *timeLabel;
 	HistoryChart *chart;
 };
 

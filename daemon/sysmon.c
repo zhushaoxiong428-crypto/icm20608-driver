@@ -16,6 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/statvfs.h>
+#include <sys/timex.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -175,6 +176,15 @@ void sysmon_sample(struct sysmon *m, const char *disk_path, struct sysmon_sample
 			avail_kb = meminfo_kb(buf, "MemFree:") + meminfo_kb(buf, "Cached:");
 		s->mem_total_mb = total_kb / 1024.0;
 		s->mem_used_mb = (total_kb - avail_kb) / 1024.0;
+	}
+	{
+		/* 只读查询（modes = 0）：ntpd 校准后会清掉 STA_UNSYNC，未校准或失去同步时置位 */
+		struct timex tmx;
+		int state;
+
+		memset(&tmx, 0, sizeof(tmx));
+		state = adjtimex(&tmx);
+		s->clock_synced = state != -1 && state != TIME_ERROR && !(tmx.status & STA_UNSYNC);
 	}
 	if (!read_file("/proc/loadavg", buf, sizeof(buf)))
 		s->load1 = strtod(buf, NULL);
