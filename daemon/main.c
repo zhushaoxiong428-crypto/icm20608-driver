@@ -75,6 +75,7 @@ struct app {
 	const char *key_state;
 
 	struct recorder rec;
+	struct sysmon sysmon;
 };
 
 /* ---------------- 状态消息 ---------------- */
@@ -301,6 +302,19 @@ static void timer_ack(int fd)
 		dlog("read timerfd: %s", strerror(errno));
 }
 
+static void publish_sys(struct app *a)
+{
+	struct sysmon_sample s;
+
+	sysmon_sample(&a->sysmon, a->records_dir, &s);
+	server_broadcast(a->srv,
+			 "SYS cpu=%.1f self_cpu=%.2f mem_used=%.1f mem_total=%.1f load=%.2f "
+			 "uptime=%ld temp=%.1f rx=%.1f tx=%.1f disk_free=%.0f disk_total=%.0f",
+			 s.cpu_pct, s.self_cpu_pct, s.mem_used_mb, s.mem_total_mb, s.load1,
+			 s.uptime_s, s.temp_ok ? s.temp_c : -273.0, s.rx_kbps, s.tx_kbps,
+			 s.disk_ok ? s.disk_free_mb : -1.0, s.disk_ok ? s.disk_total_mb : -1.0);
+}
+
 static void on_tick(struct app *a)
 {
 	char err[ERRLEN];
@@ -308,6 +322,7 @@ static void on_tick(struct app *a)
 	timer_ack(a->tick_fd);
 	read_ap(a);
 	publish_imu(a);
+	publish_sys(a);
 	if (recorder_flush(&a->rec, err))
 		stop_recording(a, err);
 }
@@ -659,6 +674,7 @@ int main(int argc, char *argv[])
 	else
 		dlog("key input \"%s\" not found", KEY_INPUT_NAME);
 
+	sysmon_init(&a->sysmon);
 	epoll_add(a, a->signal_fd, &a->w_signal, W_SIGNAL);
 	epoll_add(a, a->tick_fd, &a->w_tick, W_TICK);
 	epoll_add(a, a->drain_fd, &a->w_drain, W_DRAIN);

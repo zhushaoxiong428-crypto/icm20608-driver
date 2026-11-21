@@ -23,7 +23,8 @@
 | ICM20608 | 自研 IIO 驱动（子模块）：regmap-spi，数据就绪中断 + triggered buffer，中断上半部记内核时间戳；应用默认 100 Hz 经 IIO 缓冲区批量读取，不丢样 |
 | GT911 / GT1158 | I²C 通信、线程化中断、最多 5 个触点的多点触摸上报；兼容 GT9147 / GT1151 / GT1158（ATK-4384 屏为 GT1158） |
 | UART3 | 使用 BSP 串口驱动进行 115200、8N1 收发回环测试 |
-| Qt 界面 | Monitor / Settings / Record 三页（小屏布局），数据刷新、设备状态和错误提示 |
+| Qt 界面 | Monitor / System / Settings / Record 四页（小屏布局），数据刷新、设备状态和错误提示 |
+| 系统监控 | CPU（及 devmond 自身）、内存、负载、运行时间、SoC 温度、网络收发速率、录制目录剩余空间，最近 120 个周期的 CPU / 温度曲线 |
 | 自动控制 | ALS 双阈值控制 LED，支持手动／自动切换 |
 | 参数设置 | 修改光照阈值和采集间隔，由 devmond 校验并原子写回 ini |
 | 采集守护进程 | devmond：epoll + timerfd + signalfd 单线程事件循环，Unix 域套接字文本行协议，多客户端；界面退出后采集与录制继续 |
@@ -234,6 +235,10 @@ echo 6 > /sys/class/backlight/backlight/brightness
 - 勾选 `Auto LED` 后，手动 LED 按钮禁用，实体按键只显示按下／松开状态。
 - 自动模式使用 ALS 原始数值判断：小于等于开灯阈值时开灯，大于等于关灯阈值时关灯，中间保持当前状态。
 - ALS 无效或读取失败时不进行自动判断，保持 LED 当前状态。
+
+### System
+
+由 `devmond` 每个采集周期从 `/proc`、`/sys` 采集后推送（`SYS` 消息）：CPU 占用与 devmond 自身占用（自身按最近 10 个周期平均，CPU 时间以 10 ms 节拍计，单周期分辨率只有 1 %）、内存（MemTotal − MemAvailable）、1 分钟负载、运行时间、SoC 温度（`imx_thermal`，≥ 85 °C 标红）、除 `lo` 外网卡收发速率（NFS 根文件系统的流量也计在内）、录制目录所在文件系统剩余空间（< 100 MB 标红）。右侧曲线为最近 120 个周期的 CPU % 和 SoC 温度。该页由代码创建并插入标签栏，三套 `.ui` 布局无需修改。
 
 ### Settings
 

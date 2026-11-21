@@ -81,7 +81,7 @@ $(BUILD_DIR)/touch_test: app/touch_test.c | $(BUILD_DIR)
 
 # 采集守护进程与命令行客户端（纯 C，不依赖 Qt）
 DAEMON_SRCS := daemon/main.c daemon/server.c daemon/imu.c daemon/ap.c daemon/io.c \
-	daemon/config.c daemon/recorder.c daemon/iio.c daemon/log.c
+	daemon/config.c daemon/recorder.c daemon/iio.c daemon/log.c daemon/sysmon.c
 DAEMON_CFLAGS := -std=gnu99 -D_GNU_SOURCE -O2 -Wall -Wextra -Iinclude -Idaemon
 
 daemon: $(BUILD_DIR)/devmond $(BUILD_DIR)/devmonctl

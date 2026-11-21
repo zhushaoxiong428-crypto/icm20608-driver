@@ -2,6 +2,7 @@
 #include "ui_mainwindow.h"
 #include "ap3216c_data.h"
 #include "daemonclient.h"
+#include "systempage.h"
 
 #include <QDateTime>
 #include <QDebug>
@@ -16,12 +17,16 @@ MainWindow::MainWindow(QWidget *parent)
 	: QMainWindow(parent)
 	, ui(new Ui::MainWindow)
 	, client(new DaemonClient(this))
+	, systemPage(new SystemPage)
 	, ledAvailable(false)
 	, autoMode(false)
 	, recording(false)
 	, proximityState(-1)
 {
 	ui->setupUi(this);
+
+	/* System 页用代码插入，三套 .ui 布局都不用改 */
+	ui->mainTabWidget->insertTab(1, systemPage, "System");
 
 	ui->apStatusLabel->setText("AP3216C: WAITING");
 	ui->icmStatusLabel->setText("ICM20608: WAITING");
@@ -65,6 +70,7 @@ void MainWindow::onConnectionChanged(bool connected, const QString &reason)
 	ui->icmStatusLabel->setText("ICM20608: WAITING");
 	ui->icmStatusLabel->setStyleSheet(kWarn);
 	ui->keyLabel->setText("KEY: --");
+	systemPage->setOffline();
 	ui->statusbar->showMessage(reason + " - retrying");
 }
 
@@ -74,6 +80,8 @@ void MainWindow::onMessage(const QString &type, const QHash<QString, QString> &f
 		updateAp(fields);
 	} else if (type == "IMU") {
 		updateImu(fields);
+	} else if (type == "SYS") {
+		systemPage->updateStats(fields);
 	} else if (type == "PROX") {
 		updateProximity(fields);
 	} else if (type == "LED") {

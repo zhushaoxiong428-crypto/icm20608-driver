@@ -127,6 +127,39 @@ int recorder_ap(struct recorder *r, int64_t ts_ns, int ir, int als, double lux,
 int recorder_imu(struct recorder *r, const struct imu_sample *s);
 int recorder_flush(struct recorder *r, char *err);
 
+/* ---------- sysmon.c：系统状态（/proc、/sys） ---------- */
+#define SYSMON_SELF_WINDOW	11	/* devmond 自身 CPU 按最近 10 个周期计算 */
+
+struct sysmon {
+	uint64_t cpu_total, cpu_idle;	/* 上次 /proc/stat */
+	/*
+	 * devmond utime + stime 的历史：CPU 时间按时钟节拍（CLK_TCK=100，10 ms）计，
+	 * 每秒采一次分辨率只有 1 %，占用 0.5 % 时读数在 0 和 1 之间跳；用 10 秒窗口提高到 0.1 %
+	 */
+	uint64_t self_ticks[SYSMON_SELF_WINDOW];
+	int64_t self_ns[SYSMON_SELF_WINDOW];
+	int self_count;
+	uint64_t rx_bytes, tx_bytes;	/* 上次除 lo 外网卡收发字节 */
+	int64_t last_ns;
+	long clk_tck;
+};
+
+struct sysmon_sample {
+	double cpu_pct;			/* 整机 CPU 占用 */
+	double self_cpu_pct;		/* devmond 自身 */
+	double mem_used_mb, mem_total_mb;
+	double load1;
+	long uptime_s;
+	double temp_c;			/* SoC 温度 */
+	bool temp_ok;
+	double rx_kbps, tx_kbps;	/* KB/s */
+	double disk_free_mb, disk_total_mb;
+	bool disk_ok;
+};
+
+void sysmon_init(struct sysmon *m);
+void sysmon_sample(struct sysmon *m, const char *disk_path, struct sysmon_sample *s);
+
 /* ---------- server.c：Unix 域套接字，文本行协议 ---------- */
 struct client;
 struct server;

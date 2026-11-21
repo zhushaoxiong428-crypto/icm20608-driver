@@ -20,11 +20,13 @@ DEFINES += QT_DEPRECATED_WARNINGS
 SOURCES += \
     daemonclient.cpp \
     main.cpp \
-    mainwindow.cpp
+    mainwindow.cpp \
+    systempage.cpp
 
 HEADERS += \
     daemonclient.h \
-    mainwindow.h
+    mainwindow.h \
+    systempage.h
 
 # 屏幕布局：默认 ATK-4384（4.3 寸 800x480）；qmake LCD=480x272（ATK-4342）或 LCD=1024x600（7 寸）
 # 各 .ui 的控件 objectName 相同，uic 都生成 ui_mainwindow.h，C++ 代码无需改动

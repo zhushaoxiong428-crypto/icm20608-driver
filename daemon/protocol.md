@@ -25,6 +25,7 @@ REC state=off dir=/device-management/records
 | --- | --- | --- |
 | `AP ir= als= lux= ps= flags=` | 每个采集周期、`READ` 后 | 原始值；`lux` = als × in_illuminance_scale；`flags` 位 1/2/4 = IR/ALS/PS 有效（IR 溢出时 IR、PS 无效） |
 | `IMU n= rate= ax= ay= az= gx= gy= gz= temp=` | 每个采集周期 | 本周期 n 个样本的平均值，g / dps / °C；`rate` 按内核时间戳计算 |
+| `SYS cpu= self_cpu= mem_used= mem_total= load= uptime= temp= rx= tx= disk_free= disk_total=` | 每个采集周期 | CPU %（与上周期的差值）与 devmond 自身 %（最近 10 个周期的平均，节拍分辨率所限）、内存 MB、1 分钟负载、运行秒数、SoC 温度 °C（无传感器时 -273）、除 lo 外网卡收发 KB/s、录制目录所在文件系统 MB（不可用时 -1） |
 | `PROX state=near\|far count= ts=` | AP_INT 接近中断 | `ts` 为驱动在中断上半部记录的 CLOCK_REALTIME 纳秒；连接时补发的当前状态不带 `ts` |
 | `LED state=on\|off\|unavailable auto=0\|1` | LED 或自动模式变化 | |
 | `KEY state=ready\|pressed\|released\|unavailable` | 按键 | 手动模式下按下会翻转 LED |

@@ -12,6 +12,7 @@ class MainWindow;
 QT_END_NAMESPACE
 
 class DaemonClient;
+class SystemPage;
 
 /*
  * 界面只做显示和下发命令：采集、LED、按键、自动亮灯、参数保存、CSV 录制都在 devmond 里，
@@ -53,6 +54,7 @@ private:
 
 	Ui::MainWindow *ui;
 	DaemonClient *client;
+	SystemPage *systemPage;
 
 	bool ledAvailable;
 	bool autoMode;
