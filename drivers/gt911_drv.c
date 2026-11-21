@@ -12,6 +12,7 @@
 
 #define GT911_REG_INFO	 0x8140 /* 产品信息寄存器起始地址 */
 #define GT911_REG_CONFIG 0x8047 /* 配置寄存器起始地址 */
+#define GT1X_REG_CONFIG	 0x8050 /* GT1151/GT1158 配置寄存器起始地址 */
 #define GT911_REG_STATUS 0x814e /* 触摸数据状态寄存器 */
 #define GT911_REG_POINTS 0x814f /* 坐标数据寄存器 */
 
@@ -151,6 +152,7 @@ static int gt911_read_info(struct gt911_device *ts)
 	struct i2c_client *client = ts->client;
 	unsigned char info[10];
 	unsigned char config[7];
+	unsigned short config_reg;
 	unsigned int expected;
 	int ret;
 
@@ -159,21 +161,40 @@ static int gt911_read_info(struct gt911_device *ts)
 		return ret;
 	}
 
-	if (memcmp(info, "911", 3) != 0) {
+	/*
+	 * 支持两类 Goodix 芯片，触摸点数据格式相同（0x814E 状态、0x814F 起每点 8 字节）：
+	 *   GT9xx：GT911（7 寸 1024x600）、GT9147，配置区起始 0x8047
+	 *   GT1x ：GT1151、GT1158（ALPHA 4.3 寸 480x272 实测为 "1158"），配置区起始 0x8050
+	 * 配置区第 1~4 字节为 X/Y 分辨率，第 6 字节低 2 位为中断触发方式
+	 */
+	if (!memcmp(info, "911", 3) || !memcmp(info, "9147", 4)) {
+		config_reg = GT911_REG_CONFIG;
+	} else if (!memcmp(info, "1151", 4) || !memcmp(info, "1158", 4)) {
+		config_reg = GT1X_REG_CONFIG;
+	} else {
 		dev_err(&client->dev, "unexpected product ID: %02x %02x %02x %02x\n",
 			info[0], info[1], info[2], info[3]);
 		return -ENODEV;
 	}
 
-	/* x_size、y_size保存的是xy轴的分辨率 */
 	ts->firmware = gt911_get_le16(&info[4]);
-	ts->x_size = gt911_get_le16(&info[6]);
-	ts->y_size = gt911_get_le16(&info[8]);
 
-	ret = gt911_read_regs(client, GT911_REG_CONFIG, config, sizeof(config));
+	ret = gt911_read_regs(client, config_reg, config, sizeof(config));
 	if (ret) {
 		return ret;
 	}
+
+	/* x_size、y_size保存的是xy轴的分辨率 */
+	if (config_reg == GT911_REG_CONFIG) {
+		/* GT9xx 沿用原实现：产品信息区 0x8146~0x8149 */
+		ts->x_size = gt911_get_le16(&info[6]);
+		ts->y_size = gt911_get_le16(&info[8]);
+	} else {
+		ts->x_size = gt911_get_le16(&config[1]);
+		ts->y_size = gt911_get_le16(&config[3]);
+	}
+	dev_info(&client->dev, "product ID %.4s, firmware 0x%04x, config @0x%04x\n",
+		info, ts->firmware, config_reg);
 
 	ts->trigger = config[6] & 0x03;
 	ts->max_touch = GT911_MAX_TOUCH;
