@@ -312,6 +312,17 @@ mmcblk1boot0/1        U-Boot 副本                      不动
   ```
 
 - **远程访问**：`devmond -t 9100`（启动脚本默认开启，`DEVMOND_TCP_PORT=0` 关闭）。PC 上 `devmonctl -H 192.168.10.50 watch`，或在 PC 上用主机 Qt 编译同一个界面后 `DEVMOND_ADDR=192.168.10.50:9100 ./device_monitor`。TCP 连接开启 `TCP_NODELAY` 与 keepalive（断网约 1 分钟后释放连接）；界面的 TCP 连接不走代理（PC 上的 `ALL_PROXY` 会让 `QTcpSocket` 连到本机代理，代理不转发局域网地址，表现为 "Remote host closed"）。协议没有认证，只在可信局域网使用。
+- **MQTT**：启动脚本默认 `MQTT_BROKER=192.168.10.1`（设为空字符串关闭），`devmond` 作为 MQTT 客户端把所有推送发布到 `devmon/<主机名>/<类型>`（JSON），从 `.../cmd` 接收与套接字相同的命令，应答发到 `.../reply`；`.../status` 为 `online`/`offline`（遗嘱，断电、断线时由 broker 代发）。主题与规则见 [daemon/protocol.md](daemon/protocol.md#mqtt-桥接)。客户端是自己实现的 MQTT 3.1.1 子集（`daemon/mqtt.c`、`mqtt_proto.c`），在同一个 epoll 循环里非阻塞运行，不依赖第三方库；broker 不在时按 1–30 s 退避重试，其他功能不受影响。System 页显示连接状态。报文编解码有主机上的单元测试：`make daemon-test`。主机上装 broker（只在开发板网口的地址上监听，WiFi 那边访问不到）：
+
+  ```sh
+  sudo apt install -y mosquitto mosquitto-clients
+  printf 'listener 1883 192.168.10.1\nallow_anonymous true\n' | sudo tee /etc/mosquitto/conf.d/devboard.conf
+  sudo systemctl restart mosquitto
+  mosquitto_sub -h 192.168.10.1 -v -t 'devmon/#'          # 看板子发来的消息
+  mosquitto_pub -h 192.168.10.1 -t devmon/<主机名>/cmd -m 'LED toggle'
+  ```
+
+  只绑定 192.168.10.1 时，开机时网口还没有地址（没插网线）mosquitto 会启动失败，插上后 `sudo systemctl restart mosquitto`。
 
 ### 可靠性
 

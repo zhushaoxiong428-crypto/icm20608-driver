@@ -172,6 +172,8 @@ struct server;
 
 typedef void (*command_cb)(struct server *srv, struct client *c, char *line, void *ctx);
 typedef void (*connect_cb)(struct server *srv, struct client *c, void *ctx);
+/* 虚拟客户端收到的一行（不含换行） */
+typedef void (*line_sink)(const char *line, void *ctx);
 
 int server_open(struct server **out, int epfd, const char *path,
 		command_cb on_command, connect_cb on_connect, void *ctx);
@@ -184,5 +186,13 @@ void client_send(struct server *srv, struct client *c, const char *fmt, ...)
 void server_broadcast(struct server *srv, const char *fmt, ...)
 	__attribute__((format(printf, 2, 3)));
 int server_client_count(const struct server *srv);
+/*
+ * 虚拟客户端：收到的广播和应答直接回调 sink；不计入连接数。attach 时同样调用 on_connect
+ * 发一遍完整状态。detach 之后 c 不能再用。sink 里不要调用 attach/detach。
+ */
+struct client *server_attach(struct server *srv, line_sink sink, void *ctx);
+void server_detach(struct server *srv, struct client *c);
+/* 以客户端 c 的身份执行一条命令，应答发给 c */
+void server_command(struct server *srv, struct client *c, char *line);
 
 #endif /* DEVMOND_H */

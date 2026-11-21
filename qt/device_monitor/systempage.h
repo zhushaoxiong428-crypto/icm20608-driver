@@ -38,6 +38,7 @@ class SystemPage : public QWidget
 public:
 	explicit SystemPage(QWidget *parent = nullptr);
 	void updateStats(const QHash<QString, QString> &fields);
+	void updateMqtt(const QHash<QString, QString> &fields);	/* MQTT state= broker= msg= */
 	void setOffline();
 
 private:
@@ -48,6 +49,7 @@ private:
 	QLabel *netLabel;
 	QLabel *diskLabel;
 	QLabel *timeLabel;
+	QLabel *mqttLabel;
 	HistoryChart *chart;
 };
 

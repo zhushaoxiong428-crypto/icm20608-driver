@@ -7,7 +7,8 @@
 # 停止 devmond：kill $(cat /tmp/devmond.pid)（只发给监管进程，它会停工作进程并关闭看门狗）
 # 环境变量：TZ（默认 CST-8 北京时间）、NTP_SERVER（默认 192.168.10.1，即 TFTP/NFS 服务器）、
 #           DEVMOND_TCP_PORT（默认 9100，0 关闭远程访问）、
-#           WATCHDOG（硬件看门狗超时秒数，默认 15；开发调试时设 0，避免停掉 devmond 后整板复位）
+#           WATCHDOG（硬件看门狗超时秒数，默认 15；开发调试时设 0，避免停掉 devmond 后整板复位）、
+#           MQTT_BROKER（默认 192.168.10.1，设为空字符串关闭 MQTT）、MQTT_TOPIC（默认 devmon/主机名）
 # 约定路径（与正点原子《移植Qt5.12.9》一致）：Qt 在 /usr/lib/arm-qt，tslib 在 /usr/lib/arm-tslib，
 # 字体在 /usr/share/fonts；本脚本、驱动 .ko 与 device_monitor 放在同一目录
 
@@ -39,11 +40,14 @@ fi
 echo 10 > /proc/sys/kernel/panic
 DEVMOND_TCP_PORT=${DEVMOND_TCP_PORT:-9100}
 WATCHDOG=${WATCHDOG:-15}
+# MQTT：所有推送转发到 broker，并从 <主题>/cmd 接收命令；broker 不在时 devmond 自己退避重试
+MQTT_BROKER=${MQTT_BROKER-192.168.10.1}
 if pidof devmond > /dev/null; then
 	echo "devmond already running (pid $(cat /tmp/devmond.pid 2>/dev/null))"
 else
 	./devmond -d -l /tmp/devmond.log -t "$DEVMOND_TCP_PORT" -w "$WATCHDOG" \
-		&& echo "devmond started, log /tmp/devmond.log, tcp port $DEVMOND_TCP_PORT, watchdog $WATCHDOG s"
+		${MQTT_BROKER:+-m "$MQTT_BROKER"} ${MQTT_TOPIC:+-M "$MQTT_TOPIC"} \
+		&& echo "devmond started, log /tmp/devmond.log, tcp port $DEVMOND_TCP_PORT, watchdog $WATCHDOG s, mqtt ${MQTT_BROKER:-off}"
 fi
 [ "$1" = "--daemon-only" ] && exit 0
 

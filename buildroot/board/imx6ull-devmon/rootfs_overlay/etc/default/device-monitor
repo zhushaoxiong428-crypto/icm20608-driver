@@ -1,2 +1,8 @@
-# S90device-monitor 读取：设备监测系统安装目录（NFS 开发环境默认为 /device-management）
+# S90device-monitor 读取，其中的变量会导出给 run_device_monitor.sh
+# 设备监测系统安装目录（NFS 开发环境默认为 /device-management）
 DIR=/opt/device-monitor
+# 以下为启动脚本的可选参数（取消注释后生效），含义见 run_device_monitor.sh 开头
+#MQTT_BROKER=192.168.10.1	# 设为空字符串关闭 MQTT
+#MQTT_TOPIC=devmon/alpha	# 默认 devmon/主机名
+#DEVMOND_TCP_PORT=9100
+#WATCHDOG=15

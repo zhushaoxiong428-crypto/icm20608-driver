@@ -9,6 +9,8 @@
  *   避免在处理某个客户端的命令时（命令里可能广播）把它自己释放掉
  * - 可同时监听 Unix 套接字（本机界面）和 TCP（远程访问，协议相同）；
  *   TCP 连接打开 TCP_NODELAY（命令应答不等 Nagle）和 keepalive（网线拔掉后约 1 分钟发现对端已失联）
+ * - 虚拟客户端（server_attach）：没有 fd，发给它的每一行（广播和命令应答）直接回调 sink；
+ *   MQTT 桥接（mqtt.c）就是这样一个客户端，把协议行转成 MQTT 消息，收到的命令经 server_command 执行
  */
 #include "devmond.h"
 
@@ -29,7 +31,9 @@
 #define OUT_MAX		(256 * 1024)
 
 struct client {
-	int fd;
+	int fd;			/* 虚拟客户端为 -1 */
+	line_sink sink;		/* 非 NULL 表示虚拟客户端 */
+	void *sink_ctx;
 	char peer[48];		/* "local" 或 TCP 对端 IP:端口，用于日志 */
 	bool dead;
 	bool want_out;
@@ -100,6 +104,10 @@ static void client_vsend(struct server *srv, struct client *c, const char *fmt, 
 	n = vsnprintf(line, sizeof(line) - 1, fmt, ap);
 	if (n < 0)
 		return;
+	if (c->sink) {
+		c->sink(line, c->sink_ctx);	/* 截断的长行同样交给 sink，不加换行 */
+		return;
+	}
 	if (n > (int)sizeof(line) - 2)
 		n = sizeof(line) - 2;	/* 超长消息截断，仍保证以换行结束 */
 	line[n++] = '\n';
@@ -151,12 +159,16 @@ static void reap(struct server *srv)
 			continue;
 		}
 		*pp = c->next;
+		if (c->sink) {
+			free(c);	/* 虚拟客户端不占连接数，也没有 fd */
+			continue;
+		}
 		epoll_ctl(srv->epfd, EPOLL_CTL_DEL, c->fd, NULL);
 		close(c->fd);
+		dlog("client %s disconnected (%d left)", c->peer, srv->nclients - 1);
 		free(c->out);
 		free(c);
 		srv->nclients--;
-		dlog("client %s disconnected (%d left)", c->peer, srv->nclients);
 	}
 }
 
@@ -177,6 +189,40 @@ void server_broadcast(struct server *srv, const char *fmt, ...)
 int server_client_count(const struct server *srv)
 {
 	return srv->nclients;
+}
+
+struct client *server_attach(struct server *srv, line_sink sink, void *ctx)
+{
+	struct client *c = calloc(1, sizeof(*c));
+
+	if (!c)
+		return NULL;
+	c->fd = -1;
+	c->sink = sink;
+	c->sink_ctx = ctx;
+	c->next = srv->clients;
+	srv->clients = c;
+	/* 和真实客户端一样，连上就收到一遍完整状态 */
+	if (srv->on_connect) {
+		srv->busy++;
+		srv->on_connect(srv, c, srv->ctx);
+		srv->busy--;
+	}
+	return c;
+}
+
+void server_detach(struct server *srv, struct client *c)
+{
+	c->dead = true;
+	reap(srv);
+}
+
+void server_command(struct server *srv, struct client *c, char *line)
+{
+	srv->busy++;	/* 命令里的广播可能让别的客户端出错，回调结束后再回收 */
+	srv->on_command(srv, c, line, srv->ctx);
+	srv->busy--;
+	reap(srv);
 }
 
 static void tune_tcp(int fd)

@@ -82,6 +82,8 @@ void MainWindow::onMessage(const QString &type, const QHash<QString, QString> &f
 		updateImu(fields);
 	} else if (type == "SYS") {
 		systemPage->updateStats(fields);
+	} else if (type == "MQTT") {
+		systemPage->updateMqtt(fields);
 	} else if (type == "PROX") {
 		updateProximity(fields);
 	} else if (type == "LED") {

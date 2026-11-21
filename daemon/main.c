@@ -8,9 +8,11 @@
  *   AP 事件 fd  AP_INT 中断产生的接近事件
  *   按键 fd     input 事件，手动模式下翻转 LED
  *   套接字      客户端命令与数据推送（server.c）
+ *   MQTT       可选（-m）：broker 连接与 1 s 保活定时器（mqtt.c），作为虚拟客户端桥接全部消息
  * 没有共享数据、不需要锁；任何一个 fd 都不会阻塞住其他 fd。
  */
 #include "devmond.h"
+#include "mqtt.h"
 #include "ap3216c_data.h"
 
 #include <errno.h>
@@ -46,6 +48,7 @@ struct app {
 	int epfd;
 	bool running;
 	struct server *srv;
+	struct mqtt *mqtt;		/* 未启用 MQTT 时为 NULL */
 
 	struct config cfg;
 	char config_path[PATH_MAX];
@@ -156,6 +159,12 @@ static void on_connect(struct server *srv, struct client *c, void *ctx)
 		client_send(srv, c, "AP_ERR msg=%s", a->ap_err);
 	if (!a->imu_ok)
 		client_send(srv, c, "IMU_ERR msg=%s", a->imu_err);
+	{
+		char line[256];
+
+		mqtt_status_line(a->mqtt, line, sizeof(line));
+		client_send(srv, c, "%s", line);
+	}
 }
 
 /* ---------------- LED 与自动控制 ---------------- */
@@ -598,9 +607,12 @@ static void exe_dir(char *out, size_t len)
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"usage: %s [-d] [-l log] [-s socket] [-t port] [-w secs] [-n] [-c config.ini] [-r records_dir] [-p pidfile]\n"
+		"usage: %s [-d] [-l log] [-s socket] [-t port] [-w secs] [-n] [-m broker[:port]] [-M topic]\n"
+		"          [-c config.ini] [-r records_dir] [-p pidfile]\n"
 		"  -d  run as a daemon (log to -l, default /tmp/devmond.log)\n"
 		"  -t  also listen on TCP port for remote clients (same protocol, no auth: LAN only)\n"
+		"  -m  publish everything to an MQTT broker (IPv4 address) and take commands from <topic>/cmd\n"
+		"  -M  MQTT topic prefix (default devmon/<hostname>)\n"
 		"  -w  arm the hardware watchdog with this timeout, fed by the supervisor\n"
 		"  -n  no supervisor: run the worker directly (debugging; no restart, no watchdog)\n"
 		"  stop: kill $(cat pidfile)  (the supervisor stops the worker and disarms the watchdog)\n"
@@ -616,6 +628,8 @@ int main(int argc, char *argv[])
 	const char *pid_path = DEVMOND_DEFAULT_PIDFILE;
 	const char *log_path = "/tmp/devmond.log";
 	char dir[PATH_MAX], key_path[64], err[ERRLEN];
+	char host[64] = "board", mqtt_prefix[96] = "", mqtt_id[80];
+	const char *mqtt_broker = NULL;
 	bool daemon_mode = false;
 	int tcp_port = 0, watchdog_s = 0;
 	bool supervised = true;
@@ -626,7 +640,7 @@ int main(int argc, char *argv[])
 	snprintf(a->config_path, sizeof(a->config_path), "%s/device_monitor.ini", dir);
 	snprintf(a->records_dir, sizeof(a->records_dir), "%s/records", dir);
 
-	while ((opt = getopt(argc, argv, "dl:s:t:w:nc:r:p:h")) != -1) {
+	while ((opt = getopt(argc, argv, "dl:s:t:w:nm:M:c:r:p:h")) != -1) {
 		switch (opt) {
 		case 'd': daemon_mode = true; break;
 		case 'l': log_path = optarg; break;
@@ -634,6 +648,8 @@ int main(int argc, char *argv[])
 		case 't': tcp_port = atoi(optarg); break;
 		case 'w': watchdog_s = atoi(optarg); break;
 		case 'n': supervised = false; break;
+		case 'm': mqtt_broker = *optarg ? optarg : NULL; break;
+		case 'M': snprintf(mqtt_prefix, sizeof(mqtt_prefix), "%s", optarg); break;
 		case 'c': snprintf(a->config_path, sizeof(a->config_path), "%s", optarg); break;
 		case 'r': snprintf(a->records_dir, sizeof(a->records_dir), "%s", optarg); break;
 		case 'p': pid_path = optarg; break;
@@ -685,6 +701,16 @@ int main(int argc, char *argv[])
 		return 1;
 	if (tcp_port > 0 && server_listen_tcp(a->srv, tcp_port))
 		return 1;
+
+	/* MQTT 连不上不影响其他功能：mqtt.c 自己退避重试；只有地址写错时不启用 */
+	if (mqtt_broker) {
+		gethostname(host, sizeof(host) - 1);
+		if (!*mqtt_prefix)
+			snprintf(mqtt_prefix, sizeof(mqtt_prefix), "devmon/%s", host);
+		snprintf(mqtt_id, sizeof(mqtt_id), "devmond-%s", host);
+		if (mqtt_open(&a->mqtt, a->epfd, a->srv, mqtt_broker, mqtt_prefix, mqtt_id))
+			a->mqtt = NULL;
+	}
 
 	/* 设备打开失败不退出：界面能看到具体哪个设备出错，其余功能照常 */
 	a->prox_state = -1;
@@ -743,6 +769,8 @@ int main(int argc, char *argv[])
 
 			if (server_dispatch(a->srv, w, events[i].events))
 				continue;
+			if (a->mqtt && mqtt_dispatch(a->mqtt, w, events[i].events))
+				continue;
 			switch (w->kind) {
 			case W_SIGNAL: {
 				struct signalfd_siginfo si;
@@ -785,6 +813,7 @@ int main(int argc, char *argv[])
 		imu_close(&a->imu);
 	if (a->ap_ok)
 		ap_close(&a->ap);
+	mqtt_close(a->mqtt);	/* 先于 server：它的虚拟客户端挂在 server 上；不发 DISCONNECT，broker 发布遗嘱 offline */
 	server_close(a->srv);
 	if (pid_fd >= 0) {
 		unlink(pid_path);

@@ -10,8 +10,11 @@
 # stop  先停界面的重启循环再停界面，最后让 devmond 监管进程正常退出（停工作进程、关闭看门狗，不会复位）
 
 # 安装目录：NFS 开发环境为 /device-management；Buildroot 根文件系统由 /etc/default/device-monitor 设为 /opt/device-monitor
+# 其中的变量全部导出，启动脚本 run_device_monitor.sh 也能读到（如 MQTT_BROKER、WATCHDOG）
 DIR=/device-management
+set -a
 [ -r /etc/default/device-monitor ] && . /etc/default/device-monitor
+set +a
 UI_PID=/tmp/device_monitor_ui.pid
 DEVMOND_PID=/tmp/devmond.pid
 

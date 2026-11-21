@@ -123,6 +123,7 @@ SystemPage::SystemPage(QWidget *parent)
 	, netLabel(new QLabel)
 	, diskLabel(new QLabel)
 	, timeLabel(new QLabel)
+	, mqttLabel(new QLabel)
 	, chart(new HistoryChart)
 {
 	/* 与其他标签页同样的深色背景（普通 QWidget 需要 WA_StyledBackground 才会画样式表背景） */
@@ -132,7 +133,7 @@ SystemPage::SystemPage(QWidget *parent)
 
 	QGroupBox *stats = new QGroupBox("Resources");
 	QVBoxLayout *statsLayout = new QVBoxLayout(stats);
-	for (QLabel *label : { timeLabel, cpuLabel, memLabel, loadLabel, tempLabel, netLabel, diskLabel }) {
+	for (QLabel *label : { timeLabel, cpuLabel, memLabel, loadLabel, tempLabel, netLabel, diskLabel, mqttLabel }) {
 		statsLayout->addWidget(label);
 	}
 	statsLayout->addStretch(1);
@@ -159,7 +160,31 @@ void SystemPage::setOffline()
 	diskLabel->setText("DISK: --");
 	timeLabel->setText("TIME: --");
 	timeLabel->setStyleSheet(kNormal);
+	mqttLabel->setText("MQTT: --");
+	mqttLabel->setStyleSheet(kNormal);
 	chart->clear();
+}
+
+/* devmond 在 MQTT 状态变化时推送（连接时也补发一次），见 daemon/protocol.md */
+void SystemPage::updateMqtt(const QHash<QString, QString> &f)
+{
+	const QString state = f.value("state");
+
+	if (state == "connected") {
+		mqttLabel->setText(QString("MQTT: %1").arg(f.value("broker")));
+		mqttLabel->setStyleSheet(kNormal);
+	} else if (state == "off") {
+		mqttLabel->setText("MQTT: off");
+		mqttLabel->setStyleSheet(kNormal);
+	} else {
+		/* connecting / retry：broker 不在时标黄，原因截短，完整信息在 /tmp/devmond.log */
+		QString why = state == "retry" ? f.value("msg") : QString("connecting");
+
+		if (why.size() > 26)
+			why = why.left(25) + "...";
+		mqttLabel->setText(QString("MQTT: %1").arg(why));
+		mqttLabel->setStyleSheet("color: #dcdcaa;");
+	}
 }
 
 void SystemPage::updateStats(const QHash<QString, QString> &f)

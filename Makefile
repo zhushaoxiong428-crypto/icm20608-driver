@@ -11,7 +11,7 @@ DTC := $(KERNEL_DIR)/scripts/dtc/dtc
 BUILD_DIR := build
 DT_NAME := imx6ull-device-management
 
-.PHONY: all dtb modules app daemon clean
+.PHONY: all dtb modules app daemon daemon-test clean
 
 all: dtb modules app daemon
 
@@ -87,16 +87,24 @@ $(BUILD_DIR)/touch_test: app/touch_test.c | $(BUILD_DIR)
 # 采集守护进程与命令行客户端（纯 C，不依赖 Qt）
 DAEMON_SRCS := daemon/main.c daemon/server.c daemon/imu.c daemon/ap.c daemon/io.c \
 	daemon/config.c daemon/recorder.c daemon/iio.c daemon/log.c daemon/sysmon.c \
-	daemon/supervisor.c
+	daemon/supervisor.c daemon/mqtt.c daemon/mqtt_proto.c
 DAEMON_CFLAGS := -std=gnu99 -D_GNU_SOURCE -O2 -Wall -Wextra -Iinclude -Idaemon
 
 daemon: $(BUILD_DIR)/devmond $(BUILD_DIR)/devmonctl
 
-$(BUILD_DIR)/devmond: $(DAEMON_SRCS) daemon/devmond.h include/ap3216c_data.h | $(BUILD_DIR)
+$(BUILD_DIR)/devmond: $(DAEMON_SRCS) daemon/devmond.h daemon/mqtt.h include/ap3216c_data.h | $(BUILD_DIR)
 	$(CROSS_COMPILE)gcc $(DAEMON_CFLAGS) $(DAEMON_SRCS) -o $@
 
 $(BUILD_DIR)/devmonctl: daemon/devmonctl.c daemon/devmond.h | $(BUILD_DIR)
 	$(CROSS_COMPILE)gcc $(DAEMON_CFLAGS) $< -o $@
+
+# 主机上运行的单元测试（MQTT 报文编解码、协议行 -> JSON），不需要开发板
+daemon-test: $(BUILD_DIR)/host/test_mqtt_proto
+	$<
+
+$(BUILD_DIR)/host/test_mqtt_proto: daemon/test_mqtt_proto.c daemon/mqtt_proto.c daemon/mqtt.h
+	mkdir -p $(dir $@)
+	gcc $(DAEMON_CFLAGS) daemon/test_mqtt_proto.c daemon/mqtt_proto.c -o $@
 
 clean:
 	$(MAKE) -C "$(KERNEL_DIR)" M="$(CURDIR)/drivers" \
