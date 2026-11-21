@@ -91,13 +91,19 @@
     pinctrl-0 = <&pinctrl_ecspi3>;
     status = "okay";
 
-    /* BSP 中已有自研 IIO 驱动用的 imu@0（同为 CS0），本项目改用字符设备驱动，先删除 */
-    /delete-node/ imu@0;
-
-    icm20608@0 {
-        compatible = "invensense,icm20608";
+    /*
+     * ICM-20608-D 由自研 IIO 驱动（third_party/icm20608-driver）管理：
+     * regmap-spi + IIO，数据就绪中断（6D_INT = GPIO1_IO10 上升沿）驱动 triggered buffer。
+     * 与 BSP 中同名的 imu@0 节点合并，这里把属性写全，不依赖 BSP 是否已有该节点
+     */
+    imu@0 {
+        compatible = "invensense,icm20608d";
         reg = <0>;
         spi-max-frequency = <1000000>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_icm20608>; /* BSP：JTAG_MOD 复用为 GPIO1_IO10 */
+        interrupt-parent = <&gpio1>;
+        interrupts = <10 IRQ_TYPE_EDGE_RISING>;
         status = "okay";
     };
 };

@@ -5,6 +5,9 @@
 #include <QThread>
 #include <QSocketNotifier>
 #include <QFile>
+#include <QVector>
+
+#include "icm20608iio.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -33,8 +36,7 @@ private slots:
 
 	void updateApData(int ir, int als, int ps, int flags);
 	void showApError(const QString &message);
-	void updateIcmData(int accelX, int accelY, int accelZ, int gyroX, int gyroY,
-		int gyroZ, int temp);
+	void updateIcmData(const QVector<ImuSample> &samples, double rateHz);
 	void showIcmError(const QString &message);
 
 signals:
@@ -50,6 +52,7 @@ private:
 	int lightOnThreshold;
 	int lightOffThreshold;
 	int sampleIntervalMs;
+	int imuRateHz; /* ICM20608 IIO 采样率，ini 中 sensor/imuRateHz，4~1000 */
 	int keyFd;
 	QSocketNotifier *keyNotifier;
 
@@ -57,6 +60,7 @@ private:
 	SensorWorker *Worker;
 
 	bool recording;
+	qint64 recordStartNs; /* 开始记录的时刻，与 IIO 时间戳同为 CLOCK_REALTIME */
 	QFile apRecordFile;
 	QFile icmRecordFile;
 

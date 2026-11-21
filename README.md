@@ -1,8 +1,15 @@
 # i.MX6ULL 嵌入式设备监测与管理系统
 
-基于正点原子 i.MX6ULL ALPHA 开发板的嵌入式 Linux 项目。通过自定义设备树和 Linux 驱动采集板载传感器数据，在 1024×600 触摸屏上使用 Qt Widgets 显示，并实现 LED 手动／自动控制、参数保存和 CSV 数据记录。
+基于正点原子 i.MX6ULL ALPHA 开发板的嵌入式 Linux 项目。通过自定义设备树和 Linux 驱动采集板载传感器数据，在 LCD 触摸屏上使用 Qt Widgets 显示（默认正点原子 4.3 寸 800×480，另有 480×272、1024×600 布局），并实现 LED 手动／自动控制、参数保存和 CSV 数据记录。
 
 项目包含设备驱动、C 测试程序和 Qt 应用源码；BSP 内核、交叉工具链、Qt 运行库和字体需单独准备。
+
+ICM20608 使用自研 IIO 驱动，以 git 子模块引入（`third_party/icm20608-driver`），克隆时带上子模块：
+
+```sh
+git clone --recursive <本仓库地址>
+# 已克隆的仓库：git submodule update --init
+```
 
 ## 第一版功能
 
@@ -11,10 +18,10 @@
 | LED | 字符设备控制、触摸按钮和实体按键控制 |
 | 实体按键 | GPIO 中断、延迟工作消抖、Input 事件上报 |
 | AP3216C | I²C 读取红外、环境光和接近数据，保留有效标志 |
-| ICM20608 | SPI 读取三轴加速度、三轴角速度及芯片温度 |
-| GT911 | I²C 通信、线程化中断、最多 5 个触点的多点触摸上报 |
+| ICM20608 | 自研 IIO 驱动（子模块）：regmap-spi，数据就绪中断 + triggered buffer，中断上半部记内核时间戳；应用默认 100 Hz 经 IIO 缓冲区批量读取，不丢样 |
+| GT911 / GT1158 | I²C 通信、线程化中断、最多 5 个触点的多点触摸上报；兼容 GT9147 / GT1151 / GT1158（ATK-4384 屏为 GT1158） |
 | UART3 | 使用 BSP 串口驱动进行 115200、8N1 收发回环测试 |
-| Qt 界面 | Monitor / Settings 双页，数据刷新、设备状态和错误提示 |
+| Qt 界面 | Monitor / Settings / Record 三页（小屏布局），数据刷新、设备状态和错误提示 |
 | 自动控制 | ALS 双阈值控制 LED，支持手动／自动切换 |
 | 参数设置 | 修改光照阈值和采集间隔，使用 QSettings 保存、恢复 |
 | 数据记录 | 两路传感器分别保存带时间戳的 CSV，支持开始／停止记录 |
@@ -42,12 +49,13 @@ UART 使用内核已有的 i.MX 串口驱动，本项目提供用户态回环测
 .
 ├── Makefile                       # 设备树、驱动模块和 C 应用构建入口
 ├── app/                           # 单外设和联动测试程序
-├── drivers/                       # LED、按键、AP3216C、ICM20608、GT911 驱动
+├── drivers/                       # LED、按键、AP3216C、GT911 驱动
 │   └── Makefile                   # 内核模块 Kbuild 配置
 ├── dts/
 │   ├── imx6ull-device-management.dts   # 项目设备树编译入口
 │   └── imx6ull-device-management.dtsi  # 项目外设配置
-├── include/                       # 驱动与应用共享的数据结构、换算系数
+├── include/                       # 驱动与应用共享的数据结构
+├── third_party/icm20608-driver/   # 子模块：ICM20608 IIO 驱动及 iio_buffer 测试
 └── qt/device_monitor/
     ├── device_monitor.pro         # qmake 工程
     ├── main.cpp                   # 应用入口
@@ -67,9 +75,9 @@ UART 使用内核已有的 i.MX 串口驱动，本项目提供用户态回环测
 | LED | GPIO1_IO03，低电平有效 | `/dev/led0` |
 | 按键 | GPIO1_IO18，低电平有效，`KEY_ENTER` | `/dev/input/eventX` |
 | AP3216C | I2C1，7 位地址 `0x1e` | `/dev/ap3216c` |
-| ICM20608 | ECSPI3，GPIO1_IO20 软件片选，SPI Mode 0 | `/dev/icm20608` |
+| ICM20608 | ECSPI3，GPIO1_IO20 软件片选，SPI Mode 0；数据就绪中断 GPIO1_IO10 上升沿 | `/sys/bus/iio/devices/iio:deviceN`、`/dev/iio:deviceN` |
 | UART3 | UART3_TX_DATA / UART3_RX_DATA | `/dev/ttymxc2` |
-| GT911 | I2C2，7 位地址 `0x14`；INT：GPIO1_IO09；RST：GPIO5_IO09，低电平复位 | `/dev/input/eventX` |
+| GT911 / GT1158 | I2C2，7 位地址 `0x14`；INT：GPIO1_IO09；RST：GPIO5_IO09，低电平复位 | `/dev/input/eventX` |
 | LCD | BSP 已配置的 LCD 控制器及背光 | `/dev/fb0` |
 
 Input 的 `eventX` 编号不是固定值。运行时使用以下命令确定按键和触摸屏对应的节点：
@@ -117,8 +125,8 @@ make app
 产物位置：
 
 - 设备树：`build/imx6ull-device-management.dtb`。
-- 内核模块：`drivers/*.ko`。
-- C 测试程序：`build/led_test`、`key_test`、`key_led_test`、`ap3216c_test`、`icm20608_test`、`uart_test`、`touch_test`。
+- 内核模块：`drivers/*.ko`、`third_party/icm20608-driver/driver/icm20608.ko`。
+- C 测试程序：`build/led_test`、`key_test`、`key_led_test`、`ap3216c_test`、`iio_buffer`、`uart_test`、`touch_test`。
 
 `app/touch.c` 是保留的分步调试示例，当前顶层 `make app` 不编译它。
 
@@ -171,13 +179,15 @@ cd /device-management
 insmod led_drv.ko
 insmod key_drv.ko
 insmod ap3216c_drv.ko
-insmod icm20608_drv.ko
+insmod icm20608.ko
 insmod gt911_drv.ko
 dmesg | tail -n 30
 cat /proc/bus/input/devices
 ```
 
 第一次部署时先确认驱动成功绑定、设备节点存在，再启动 Qt。各模块不要求按以上顺序加载，但 Input 节点编号可能随加载顺序改变。
+
+也可以直接用 `qt/device_monitor/run_device_monitor.sh`（与 `device_monitor`、`.ko` 放在同一目录）：它加载驱动、按设备名查找触摸和按键节点、设置 Qt / tslib 环境变量后启动程序，不修改 `/etc/profile`。
 
 ### 3. 准备 Qt 运行环境
 
@@ -223,7 +233,7 @@ echo 6 > /sys/class/backlight/backlight/brightness
 | LED OFF threshold | 50 | 0～65535 |
 | Sample interval | 1000 ms | 200～60000 ms |
 
-开灯阈值必须小于关灯阈值。修改后点击 `Apply` 才生效，两个传感器使用同一采集间隔。ALS 原始值不是 lux；温度为 ICM20608 芯片温度，不应直接当作环境温度。
+开灯阈值必须小于关灯阈值。修改后点击 `Apply` 才生效。采集间隔决定 AP3216C 的读取周期和界面刷新周期；ICM20608 由数据就绪中断按自己的采样率采集，界面显示每个周期内全部样本的平均值。ALS 原始值不是 lux；温度为 ICM20608 芯片温度，不应直接当作环境温度。
 
 参数保存到程序同目录的 `device_monitor.ini`，下次启动恢复。文件内容示例：
 
@@ -234,6 +244,8 @@ offThreshold=50
 
 [sensor]
 intervalMs=1000
+; ICM20608 IIO 采样率（4～1000 Hz，界面不提供，修改后重启程序生效）
+imuRateHz=100
 ```
 
 每次启动仍为手动模式。配置不合理时使用默认值；保存失败时，本次应用的参数仍生效，但不保证下次恢复。
@@ -247,7 +259,7 @@ records/ap3216c_年月日_时分秒_毫秒.csv
 records/icm20608_年月日_时分秒_毫秒.csv
 ```
 
-目录位于可执行程序旁。AP 文件保存原始值和有效标志，无效通道留空；ICM 文件保存换算后的 `g`、`dps` 和 `C`。
+目录位于可执行程序旁。AP 文件保存原始值和有效标志，无效通道留空；ICM 文件保存换算后的 `g`、`dps` 和 `C`，**每个 IIO 样本一行**（默认 100 行/秒），时间取自驱动在数据就绪中断里记录的内核时间戳（`kernel_timestamp_ns` 列为纳秒原值）。
 
 每收到一次成功的采集结果追加一行，时间戳使用界面处理该结果时的开发板系统时间。默认每路约 1 秒一行；手动读取 AP 会额外追加一行。传感器失败期间没有对应数据行。记录前应先确认开发板系统时间。
 
@@ -263,7 +275,7 @@ records/icm20608_年月日_时分秒_毫秒.csv
 ./key_test /dev/input/event2
 ./key_led_test /dev/input/event2 /dev/led0
 ./ap3216c_test /dev/ap3216c
-./icm20608_test /dev/icm20608
+./iio_buffer 100 5 3   # 100 Hz 采集 5 秒，统计采样间隔和丢样
 ./touch_test /dev/input/event1
 ./uart_test /dev/ttymxc2
 ```
@@ -276,8 +288,9 @@ LED 接口使用一个字节的 ASCII 字符 `'0'` / `'1'`。UART 回环测试�
 Linux 驱动 / Input 事件
           │
           ├── SensorWorker（工作线程）
-          │      ├── QTimer 定时读取 AP3216C、ICM20608
-          │      └── 信号传回采集结果与错误
+          │      ├── QTimer 定时读取 AP3216C
+          │      ├── ICM20608：数据就绪中断 → 内核 IIO 缓冲区；每 100 ms 批量读走（Icm20608Iio）
+          │      └── 信号传回采集结果（ICM 为一个周期的样本批次）与错误
           │
           └── MainWindow（界面线程）
                  ├── 更新监测数据与状态
@@ -288,6 +301,8 @@ Linux 驱动 / Input 事件
 ```
 
 显示与触摸分别通过 framebuffer 和 Input / tslib 接入。界面线程不直接等待传感器采集，运行时的定时器间隔修改通过队列信号交给工作线程。
+
+ICM20608 为什么定时批量读、不用 `poll`：4.1 内核的 `iio_push_to_buffer()` 每推入一个样本都会唤醒 `poll` 等待者（`buffer/watermark` 只决定 `poll` 是否返回），实测 100 Hz 时用 `QSocketNotifier` 监听 fd，工作线程每秒被唤醒约 126 次；改为每 100 ms 读一次后降到约 34 次，其中约 24 次来自每秒一次的 AP3216C 读取（6 次单字节 SMBus 传输）。
 
 ## 常见问题
 

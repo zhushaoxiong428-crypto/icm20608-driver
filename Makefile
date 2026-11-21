@@ -31,13 +31,18 @@ dtb: | $(BUILD_DIR)
 $(BUILD_DIR):
 	mkdir -p $@
 
+# ICM-20608 使用自研 IIO 驱动（git 子模块），与 drivers/ 下的模块分开编译
+ICM_IIO_DIR := third_party/icm20608-driver
+
 modules:
 	$(MAKE) -C "$(KERNEL_DIR)" M="$(CURDIR)/drivers" \
+		ARCH=arm CROSS_COMPILE=$(CROSS_COMPILE) modules
+	$(MAKE) -C "$(KERNEL_DIR)" M="$(CURDIR)/$(ICM_IIO_DIR)/driver" \
 		ARCH=arm CROSS_COMPILE=$(CROSS_COMPILE) modules
 
 app: $(BUILD_DIR)/led_test $(BUILD_DIR)/key_test \
 	$(BUILD_DIR)/key_led_test $(BUILD_DIR)/ap3216c_test \
-	$(BUILD_DIR)/icm20608_test $(BUILD_DIR)/uart_test \
+	$(BUILD_DIR)/iio_buffer $(BUILD_DIR)/uart_test \
 	$(BUILD_DIR)/touch_test
 
 $(BUILD_DIR)/led_test: app/led_test.c | $(BUILD_DIR)
@@ -52,8 +57,9 @@ $(BUILD_DIR)/key_led_test: app/key_led_test.c | $(BUILD_DIR)
 $(BUILD_DIR)/ap3216c_test: app/ap3216c_test.c include/ap3216c_data.h | $(BUILD_DIR)
 	$(CROSS_COMPILE)gcc $< -o $@
 
-$(BUILD_DIR)/icm20608_test: app/icm20608_test.c include/icm20608_data.h | $(BUILD_DIR)
-	$(CROSS_COMPILE)gcc $< -o $@
+# IIO 缓冲区连续采集测试（来自驱动仓库）：./iio_buffer [采样率Hz] [秒数] [打印样本数]
+$(BUILD_DIR)/iio_buffer: $(ICM_IIO_DIR)/test/iio_buffer.c | $(BUILD_DIR)
+	$(CROSS_COMPILE)gcc -O2 $< -o $@ -lm
 
 $(BUILD_DIR)/uart_test: app/uart_test.c | $(BUILD_DIR)
 	$(CROSS_COMPILE)gcc $< -o $@
@@ -63,5 +69,7 @@ $(BUILD_DIR)/touch_test: app/touch_test.c | $(BUILD_DIR)
 
 clean:
 	$(MAKE) -C "$(KERNEL_DIR)" M="$(CURDIR)/drivers" \
+		ARCH=arm CROSS_COMPILE=$(CROSS_COMPILE) clean
+	$(MAKE) -C "$(KERNEL_DIR)" M="$(CURDIR)/$(ICM_IIO_DIR)/driver" \
 		ARCH=arm CROSS_COMPILE=$(CROSS_COMPILE) clean
 	rm -rf $(BUILD_DIR)

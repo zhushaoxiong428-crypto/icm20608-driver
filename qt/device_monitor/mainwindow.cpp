@@ -1,7 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "ap3216c_data.h"
-#include "icm20608_data.h"
 #include "sensorworker.h"
 
 #include <QDebug>
@@ -53,10 +52,12 @@ MainWindow::MainWindow(QWidget *parent)
 	, lightOnThreshold(20)
 	, lightOffThreshold(50)
 	, sampleIntervalMs(1000)
+	, imuRateHz(100)
 	, keyFd(-1)
 	, keyNotifier(nullptr)
 	, Worker(new SensorWorker)
 	, recording(false)
+	, recordStartNs(0)
 {
 	ui->setupUi(this); /* 在当前窗口上创建、配置控件，this == &w */
 	ui->autoModeCheckBox->setEnabled(false);
@@ -71,6 +72,10 @@ MainWindow::MainWindow(QWidget *parent)
 
 	/* 此时采集对象及其定时器仍属于界面线程，先设置初始间隔。 */
 	Worker->setSampleInterval(sampleIntervalMs);
+	Worker->setImuRate(imuRateHz);
+
+	/* 跨线程（队列连接）传递样本批次需要注册类型 */
+	qRegisterMetaType<QVector<ImuSample>>("QVector<ImuSample>");
 	Worker->moveToThread(&Thread);
 
 	/* 工作线程启动后，安排设备初始化 */
@@ -102,7 +107,7 @@ MainWindow::MainWindow(QWidget *parent)
 	connect(Worker, &SensorWorker::apErrorOccurred,
 		this, &MainWindow::showApError);
 
-	connect(Worker, &SensorWorker::icmDataReady,
+	connect(Worker, &SensorWorker::icmSamplesReady,
 		this, &MainWindow::updateIcmData);
 
 	connect(Worker, &SensorWorker::icmErrorOccurred,
@@ -365,41 +370,72 @@ void MainWindow::showApError(const QString &message)
 	ui->statusbar->showMessage(message, 5000);
 }
 
-void MainWindow::updateIcmData(int accelX, int accelY, int accelZ, int gyroX,
-	int gyroY, int gyroZ, int temp)
-{
-	double temperature = temp / 326.8 + 25.0;
+/* IIO 给出 m/s^2 与 rad/s，界面和 CSV 沿用 g 与 dps */
+static const double kStandardGravity = 9.80665;
+static const double kRadToDeg = 57.29577951308232;
 
-	ui->icmStatusLabel->setText("ICM20608: OK");
+void MainWindow::updateIcmData(const QVector<ImuSample> &samples, double rateHz)
+{
+	/* 界面显示这个刷新周期内全部样本的平均值，比单点读数更稳 */
+	double accel[3] = { 0, 0, 0 };
+	double gyro[3] = { 0, 0, 0 };
+	double temperature = 0;
+	for (const ImuSample &sample : samples) {
+		for (int axis = 0; axis < 3; axis++) {
+			accel[axis] += sample.accel[axis];
+			gyro[axis] += sample.gyro[axis];
+		}
+		temperature += sample.tempC;
+	}
+	const double n = samples.size();
+	for (int axis = 0; axis < 3; axis++) {
+		accel[axis] /= n * kStandardGravity;
+		gyro[axis] *= kRadToDeg / n;
+	}
+	temperature /= n;
+
+	ui->icmStatusLabel->setText(QString("ICM20608: OK  IIO %1 Hz").arg(rateHz, 0, 'f', 1));
 	ui->icmStatusLabel->setStyleSheet("color: #89d185;");
-	ui->icmStatusLabel->setToolTip(QString());
+	ui->icmStatusLabel->setToolTip(
+		QString("%1 samples in this interval (average shown)").arg(samples.size()));
 
 	ui->accelLabel->setText(
 		QString("ACC(g): X=%1 Y=%2 Z=%3")
-			.arg(accelX / ICM20608_ACCEL_LSB_PER_G, 0, 'f', 3)
-			.arg(accelY / ICM20608_ACCEL_LSB_PER_G, 0, 'f', 3)
-			.arg(accelZ / ICM20608_ACCEL_LSB_PER_G, 0, 'f', 3));
+			.arg(accel[0], 0, 'f', 3)
+			.arg(accel[1], 0, 'f', 3)
+			.arg(accel[2], 0, 'f', 3));
 
 	ui->gyroLabel->setText(
 		QString("GYRO(dps): X=%1 Y=%2 Z=%3")
-			.arg(gyroX / ICM20608_GYRO_LSB_PER_DPS, 0, 'f', 2)
-			.arg(gyroY / ICM20608_GYRO_LSB_PER_DPS, 0, 'f', 2)
-			.arg(gyroZ / ICM20608_GYRO_LSB_PER_DPS, 0, 'f', 2));
+			.arg(gyro[0], 0, 'f', 2)
+			.arg(gyro[1], 0, 'f', 2)
+			.arg(gyro[2], 0, 'f', 2));
 
 	ui->tempLabel->setText(QString("TEMP: %1 C").arg(temperature, 0, 'f', 2));
 
 	if (recording) {
-		QString row = QString("%1,%2,%3,%4,%5,%6,%7,%8\n")
-			.arg(QDateTime::currentDateTime().toString(Qt::ISODateWithMs))
-			.arg(accelX / ICM20608_ACCEL_LSB_PER_G, 0, 'f', 3)
-			.arg(accelY / ICM20608_ACCEL_LSB_PER_G, 0, 'f', 3)
-			.arg(accelZ / ICM20608_ACCEL_LSB_PER_G, 0, 'f', 3)
-			.arg(gyroX / ICM20608_GYRO_LSB_PER_DPS, 0, 'f', 2)
-			.arg(gyroY / ICM20608_GYRO_LSB_PER_DPS, 0, 'f', 2)
-			.arg(gyroZ / ICM20608_GYRO_LSB_PER_DPS, 0, 'f', 2)
-			.arg(temperature, 0, 'f', 2);
-
-		appendRecord(icmRecordFile, row.toUtf8());
+		/* 每个样本一行，攒成一次写入，避免每行一次系统调用 */
+		QByteArray rows;
+		rows.reserve(samples.size() * 96);
+		for (const ImuSample &sample : samples) {
+			/* 这一批从上个刷新周期开始攒，跳过按下 Start 之前的样本 */
+			if (sample.timestampNs < recordStartNs) {
+				continue;
+			}
+			const QDateTime time = QDateTime::fromMSecsSinceEpoch(sample.timestampNs / 1000000);
+			rows += QString("%1,%2,%3,%4,%5,%6,%7,%8,%9\n")
+				.arg(time.toString(Qt::ISODateWithMs))
+				.arg(sample.timestampNs)
+				.arg(sample.accel[0] / kStandardGravity, 0, 'f', 4)
+				.arg(sample.accel[1] / kStandardGravity, 0, 'f', 4)
+				.arg(sample.accel[2] / kStandardGravity, 0, 'f', 4)
+				.arg(sample.gyro[0] * kRadToDeg, 0, 'f', 3)
+				.arg(sample.gyro[1] * kRadToDeg, 0, 'f', 3)
+				.arg(sample.gyro[2] * kRadToDeg, 0, 'f', 3)
+				.arg(sample.tempC, 0, 'f', 2)
+				.toUtf8();
+		}
+		appendRecord(icmRecordFile, rows);
 	}
 }
 
@@ -447,6 +483,13 @@ void MainWindow::loadSettings()
 	ui->lightOffSpinBox->setValue(lightOffThreshold);
 	ui->sampleIntervalSpinBox->setValue(sampleIntervalMs);
 	ui->configPathLabel->setText("Config: " + path);
+
+	/* IMU 采样率只在 ini 中配置（界面不提供），重启程序生效 */
+	bool rateOk;
+	int rate = settings.value("sensor/imuRateHz", 100).toInt(&rateOk);
+	if (rateOk && rate >= 4 && rate <= 1000) {
+		imuRateHz = rate;
+	}
 }
 
 void MainWindow::on_applySettingsButton_clicked()
@@ -529,7 +572,8 @@ void MainWindow::startRecording()
 	}
 
 	QByteArray apHeader = "timestamp,ir_raw,als_raw,ps_raw,flags\n";
-	QByteArray icmHeader = "timestamp,accel_x_g,accel_y_g,accel_z_g,"
+	/* ICM 每个 IIO 样本一行，时间来自内核在数据就绪中断里记录的时间戳 */
+	QByteArray icmHeader = "timestamp,kernel_timestamp_ns,accel_x_g,accel_y_g,accel_z_g,"
 		"gyro_x_dps,gyro_y_dps,gyro_z_dps,temp_c\n";
 
 	if (apRecordFile.write(apHeader) != apHeader.size()
@@ -541,6 +585,7 @@ void MainWindow::startRecording()
 		return;
 	}
 
+	recordStartNs = QDateTime::currentMSecsSinceEpoch() * 1000000;
 	recording = true;
 	ui->recordStatusLabel->setToolTip(QString());
 	ui->recordButton->setText("Stop Recording");

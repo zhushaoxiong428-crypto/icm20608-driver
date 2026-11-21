@@ -18,11 +18,13 @@ DEFINES += QT_DEPRECATED_WARNINGS
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
+    icm20608iio.cpp \
     main.cpp \
     mainwindow.cpp \
     sensorworker.cpp
 
 HEADERS += \
+    icm20608iio.h \
     mainwindow.h \
     sensorworker.h
 
