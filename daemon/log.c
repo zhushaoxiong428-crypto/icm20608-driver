@@ -2,6 +2,7 @@
 
 #include <stdarg.h>
 #include <time.h>
+#include <unistd.h>
 
 int64_t realtime_ns(void)
 {
@@ -30,7 +31,8 @@ void dlog(const char *fmt, ...)
 	va_list ap;
 
 	format_iso_ms(realtime_ns(), stamp, sizeof(stamp));
-	fprintf(stderr, "%s devmond: ", stamp);
+	/* 带 pid：监管进程和工作进程写同一个日志文件 */
+	fprintf(stderr, "%s devmond[%d]: ", stamp, (int)getpid());
 	va_start(ap, fmt);
 	vfprintf(stderr, fmt, ap);
 	va_end(ap);

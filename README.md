@@ -25,6 +25,7 @@
 | UART3 | 使用 BSP 串口驱动进行 115200、8N1 收发回环测试 |
 | Qt 界面 | Monitor / System / Settings / Record 四页（小屏布局），数据刷新、设备状态和错误提示 |
 | 网络与时间 | `devmond -t 9100` 同一协议监听 TCP，PC 上 `devmonctl -H 板子IP` 或同一 Qt 界面（`DEVMOND_ADDR=IP:9100`）远程查看与控制；busybox `ntpd` 向主机校时，校准后写入 SNVS RTC，界面显示同步状态；本地时区北京时间 |
+| 可靠性 | devmond 监管进程（master/worker）：工作进程崩溃按退避重启、10 s 无心跳视为卡死并重启；监管进程喂 i.MX6ULL 硬件看门狗（默认 15 s），自身或系统卡死时整板复位；界面崩溃由启动脚本重启（Exit 正常退出不重启）；内核 panic 后 10 s 自动重启 |
 | 系统监控 | CPU（及 devmond 自身）、内存、负载、运行时间、SoC 温度、网络收发速率、录制目录剩余空间，最近 120 个周期的 CPU / 温度曲线 |
 | 自动控制 | ALS 双阈值控制 LED，支持手动／自动切换 |
 | 参数设置 | 修改光照阈值和采集间隔，由 devmond 校验并原子写回 ini |
@@ -199,7 +200,7 @@ cat /proc/bus/input/devices
 
 推荐直接用 `qt/device_monitor/run_device_monitor.sh`（与 `devmond`、`devmonctl`、`device_monitor`、`.ko` 放在同一目录）：它加载驱动、以守护进程方式启动 `devmond`（已在运行则跳过）、按设备名查找触摸节点、设置 Qt / tslib 环境变量后启动界面，不修改 `/etc/profile`。`--daemon-only` 只启动 `devmond`，可无屏幕运行。
 
-`devmond` 选项：`-d` 守护进程化（日志写 `-l`，默认 `/tmp/devmond.log`）、`-s` 套接字（默认 `/tmp/devmond.sock`）、`-c` 配置文件、`-r` 录制目录（默认都在可执行文件旁）、`-p` pid 文件。停止：`kill $(pidof devmond)`。
+`devmond` 选项：`-d` 守护进程化（日志写 `-l`，默认 `/tmp/devmond.log`）、`-s` 套接字（默认 `/tmp/devmond.sock`）、`-t` TCP 端口、`-w` 硬件看门狗超时秒数、`-n` 不用监管进程（调试用）、`-c` 配置文件、`-r` 录制目录（默认都在可执行文件旁）、`-p` pid 文件。停止：`kill $(cat /tmp/devmond.pid)`（只发给监管进程，它停掉工作进程并正常关闭看门狗；`pidof devmond` 会同时返回监管和工作两个进程）。
 
 ### 3. 准备 Qt 运行环境
 
@@ -250,6 +251,22 @@ echo 6 > /sys/class/backlight/backlight/brightness
 
 - **远程访问**：`devmond -t 9100`（启动脚本默认开启，`DEVMOND_TCP_PORT=0` 关闭）。PC 上 `devmonctl -H 192.168.10.50 watch`，或在 PC 上用主机 Qt 编译同一个界面后 `DEVMOND_ADDR=192.168.10.50:9100 ./device_monitor`。TCP 连接开启 `TCP_NODELAY` 与 keepalive（断网约 1 分钟后释放连接）；界面的 TCP 连接不走代理（PC 上的 `ALL_PROXY` 会让 `QTcpSocket` 连到本机代理，代理不转发局域网地址，表现为 "Remote host closed"）。协议没有认证，只在可信局域网使用。
 
+### 可靠性
+
+| 故障 | 谁发现 | 恢复 |
+| --- | --- | --- |
+| 工作进程崩溃（段错误等） | 监管进程收到 SIGCHLD | 1 s 后重启，连续崩溃时间隔翻倍（最多 30 s），稳定运行 60 s 后重置 |
+| 工作进程卡死（进程在、主循环不动） | 心跳管道 10 s 无数据 | SIGKILL 后重启 |
+| 监管进程卡死、系统卡死 | 硬件看门狗（`-w 15`） | 整板复位 |
+| 内核 panic | `/proc/sys/kernel/panic = 10` | 10 s 后重启 |
+| 界面崩溃 | 启动脚本的循环（退出码非 0） | 2 s 后重启；点 Exit（退出码 0）不重启 |
+
+分层的原因：进程级问题只重启进程（约 1 s，界面自动重连），只有监管进程或系统本身出问题才复位整板；监管进程只做 fork/waitpid/读心跳/喂狗，逻辑简单。工作进程用 `PR_SET_PDEATHSIG` 跟随监管进程退出，不留孤儿。正常停止时监管进程向 `/dev/watchdog` 写魔术字符 `V`（内核未开启 `NOWAYOUT`），驱动接手喂狗，不会复位。
+
+板上实测：工作进程 `SIGSEGV` 后 1 s 重启、界面自动重连；界面 `SIGSEGV`（退出码 139）后 2 s 重启；对监管进程 `SIGSTOP` 后 15.5 s 出现 U-Boot（15 s 看门狗超时）。BSP 设备树给 `wdog1` 设置了 `fsl,wdog_b`，看门狗通过 `WDOG_B` 引脚（`LCD_RESET` 焊盘复用）拉低核心板 `nWDOG` 复位整板，所以 U-Boot 显示 `Reset cause: POR` 而不是 `WDOG`。复位后时间正确，说明 NTP 回调写入的 RTC 生效。
+
+开发调试时停掉 devmond 会导致看门狗超时复位，可 `WATCHDOG=0 ./run_device_monitor.sh` 关闭看门狗，或用 `-n` 直接运行工作进程（便于 gdb）。
+
 ### System
 
 由 `devmond` 每个采集周期从 `/proc`、`/sys` 采集后推送（`SYS` 消息）：CPU 占用与 devmond 自身占用（自身按最近 10 个周期平均，CPU 时间以 10 ms 节拍计，单周期分辨率只有 1 %）、内存（MemTotal − MemAvailable）、1 分钟负载、运行时间、SoC 温度（`imx_thermal`，≥ 85 °C 标红）、除 `lo` 外网卡收发速率（NFS 根文件系统的流量也计在内）、录制目录所在文件系统剩余空间（< 100 MB 标红）。右侧曲线为最近 120 个周期的 CPU % 和 SoC 温度。该页由代码创建并插入标签栏，三套 `.ui` 布局无需修改。
@@ -277,7 +294,7 @@ intervalMs=1000
 imuRateHz=100
 ```
 
-参数由 `devmond` 校验、立即生效并原子写回 ini（先写临时文件、fsync，再 rename）。`devmond` 每次启动为手动模式。配置不合理时使用默认值；保存失败时，本次应用的参数仍生效，但不保证下次恢复。修改 ini 后可 `kill -HUP $(pidof devmond)` 重新读取。
+参数由 `devmond` 校验、立即生效并原子写回 ini（先写临时文件、fsync，再 rename）。`devmond` 每次启动为手动模式。配置不合理时使用默认值；保存失败时，本次应用的参数仍生效，但不保证下次恢复。修改 ini 后可 `kill -HUP $(cat /tmp/devmond.pid)` 重新读取（监管进程转发给工作进程）。
 
 ### CSV 数据记录
 

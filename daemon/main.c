@@ -76,7 +76,25 @@ struct app {
 
 	struct recorder rec;
 	struct sysmon sysmon;
+
+	int heartbeat_fd;		/* 监管模式下写给父进程的心跳，-1 表示无监管 */
+	struct timespec last_beat;
 };
+
+/* 每 2 s 给监管进程一个心跳；主循环被 100 ms 定时器不断唤醒，卡住时心跳就会停 */
+static void heartbeat(struct app *a)
+{
+	struct timespec now;
+
+	if (a->heartbeat_fd < 0)
+		return;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	if (now.tv_sec - a->last_beat.tv_sec < 2)
+		return;
+	a->last_beat = now;
+	if (write(a->heartbeat_fd, "h", 1) < 0 && errno != EAGAIN)
+		dlog("heartbeat: %s", strerror(errno));
+}
 
 /* ---------------- 状态消息 ---------------- */
 
@@ -580,9 +598,12 @@ static void exe_dir(char *out, size_t len)
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"usage: %s [-d] [-l log] [-s socket] [-t port] [-c config.ini] [-r records_dir] [-p pidfile]\n"
+		"usage: %s [-d] [-l log] [-s socket] [-t port] [-w secs] [-n] [-c config.ini] [-r records_dir] [-p pidfile]\n"
 		"  -d  run as a daemon (log to -l, default /tmp/devmond.log)\n"
 		"  -t  also listen on TCP port for remote clients (same protocol, no auth: LAN only)\n"
+		"  -w  arm the hardware watchdog with this timeout, fed by the supervisor\n"
+		"  -n  no supervisor: run the worker directly (debugging; no restart, no watchdog)\n"
+		"  stop: kill $(cat pidfile)  (the supervisor stops the worker and disarms the watchdog)\n"
 		"  defaults: socket %s, pidfile %s, config and records next to the executable\n",
 		prog, DEVMOND_DEFAULT_SOCKET, DEVMOND_DEFAULT_PIDFILE);
 }
@@ -596,20 +617,23 @@ int main(int argc, char *argv[])
 	const char *log_path = "/tmp/devmond.log";
 	char dir[PATH_MAX], key_path[64], err[ERRLEN];
 	bool daemon_mode = false;
-	int tcp_port = 0;
-	sigset_t mask;
+	int tcp_port = 0, watchdog_s = 0;
+	bool supervised = true;
+	sigset_t mask, blocked;
 	int opt, pid_fd, ret;
 
 	exe_dir(dir, sizeof(dir));
 	snprintf(a->config_path, sizeof(a->config_path), "%s/device_monitor.ini", dir);
 	snprintf(a->records_dir, sizeof(a->records_dir), "%s/records", dir);
 
-	while ((opt = getopt(argc, argv, "dl:s:t:c:r:p:h")) != -1) {
+	while ((opt = getopt(argc, argv, "dl:s:t:w:nc:r:p:h")) != -1) {
 		switch (opt) {
 		case 'd': daemon_mode = true; break;
 		case 'l': log_path = optarg; break;
 		case 's': socket_path = optarg; break;
 		case 't': tcp_port = atoi(optarg); break;
+		case 'w': watchdog_s = atoi(optarg); break;
+		case 'n': supervised = false; break;
 		case 'c': snprintf(a->config_path, sizeof(a->config_path), "%s", optarg); break;
 		case 'r': snprintf(a->records_dir, sizeof(a->records_dir), "%s", optarg); break;
 		case 'p': pid_path = optarg; break;
@@ -630,8 +654,19 @@ int main(int argc, char *argv[])
 	sigaddset(&mask, SIGINT);
 	sigaddset(&mask, SIGTERM);
 	sigaddset(&mask, SIGHUP);
-	sigprocmask(SIG_BLOCK, &mask, NULL);
+	blocked = mask;
+	sigaddset(&blocked, SIGCHLD);	/* 监管进程用 signalfd 收 SIGCHLD */
+	sigprocmask(SIG_BLOCK, &blocked, NULL);
 	signal(SIGPIPE, SIG_IGN);
+
+	/* 监管模式：父进程在 supervisor_run 里一直运行到退出，只有工作进程从这里继续 */
+	a->heartbeat_fd = -1;
+	if (supervised) {
+		a->heartbeat_fd = supervisor_run(watchdog_s, pid_fd, pid_path);
+		pid_fd = -1;	/* pid 文件归监管进程 */
+	} else if (watchdog_s > 0) {
+		dlog("-w ignored with -n: the watchdog is fed by the supervisor");
+	}
 
 	a->epfd = epoll_create1(EPOLL_CLOEXEC);
 	a->signal_fd = signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
@@ -695,6 +730,8 @@ int main(int argc, char *argv[])
 		struct epoll_event events[16];
 		int n = epoll_wait(a->epfd, events, 16, -1), i;
 
+		heartbeat(a);
+
 		if (n < 0) {
 			if (errno == EINTR)
 				continue;
@@ -749,8 +786,10 @@ int main(int argc, char *argv[])
 	if (a->ap_ok)
 		ap_close(&a->ap);
 	server_close(a->srv);
-	unlink(pid_path);
-	close(pid_fd);
+	if (pid_fd >= 0) {
+		unlink(pid_path);
+		close(pid_fd);
+	}
 	dlog("stopped");
 	return 0;
 }

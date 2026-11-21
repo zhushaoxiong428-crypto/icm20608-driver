@@ -20,6 +20,10 @@
 
 #define ERRLEN			160
 
+/* ---------- supervisor.c：master/worker 与硬件看门狗 ---------- */
+/* 只在工作进程中返回（心跳管道写端）；监管进程在内部循环直到 SIGTERM 后 exit */
+int supervisor_run(int watchdog_timeout_s, int pid_fd, const char *pid_path);
+
 /* ---------- log.c ---------- */
 void dlog(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 int64_t realtime_ns(void);
