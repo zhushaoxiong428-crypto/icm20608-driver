@@ -1,0 +1,4 @@
+# 校时（run_device_monitor.sh 启动 ntpd -p $NTP_SERVER -S ntp_event.sh）
+CONFIG_NTPD=y
+CONFIG_FEATURE_NTPD_SERVER=y
+CONFIG_FEATURE_NTPD_CONF=y

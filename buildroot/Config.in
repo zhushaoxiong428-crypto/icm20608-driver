@@ -1,0 +1,1 @@
+# 本外部树没有自定义软件包，只提供 defconfig、overlay 和 post-build 脚本

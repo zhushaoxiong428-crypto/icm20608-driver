@@ -1,0 +1,52 @@
+# 正点原子 i.MX6ULL ALPHA 设备监测系统根文件系统（烧录到 eMMC p2）
+# 用法（仓库根目录）：
+#   make -C <buildroot> O=<输出目录> BR2_EXTERNAL=$PWD/buildroot imx6ull_devmon_defconfig
+#   make -C <buildroot> O=<输出目录>        # 生成 images/rootfs.ext4、rootfs.tar
+# 内核用仓库外的正点原子教程内核（zImage + 项目 dtb），这里不构建内核和 U-Boot
+
+# Cortex-A7，NEON/VFPv4 硬浮点
+BR2_arm=y
+BR2_cortex_a7=y
+BR2_ARM_FPU_NEON_VFPV4=y
+
+# 外部工具链：直接用 Linaro 4.9.4（glibc 2.19，头文件 4.0），
+# 与 Qt、devmond、驱动编译时用的是同一份 C/C++ 运行库，也省去编译工具链的时间
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM=y
+BR2_TOOLCHAIN_EXTERNAL_PREINSTALLED=y
+BR2_TOOLCHAIN_EXTERNAL_PATH="$(HOME)/alpha/tools/gcc-linaro-4.9.4-2017.01-x86_64_arm-linux-gnueabihf"
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_PREFIX="arm-linux-gnueabihf"
+BR2_TOOLCHAIN_EXTERNAL_GCC_4_9=y
+BR2_TOOLCHAIN_EXTERNAL_HEADERS_4_0=y
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_GLIBC=y
+BR2_TOOLCHAIN_EXTERNAL_CXX=y
+
+# 系统
+BR2_TARGET_GENERIC_HOSTNAME="devmon"
+BR2_TARGET_GENERIC_ISSUE="i.MX6ULL ALPHA device monitor"
+# 北京时间：glibc 读 /etc/localtime，登录 shell、syslog、busybox date 都用本地时间（RTC 仍存 UTC）
+BR2_TARGET_TZ_INFO=y
+BR2_TARGET_TZ_ZONELIST="asia"
+BR2_TARGET_LOCALTIME="Asia/Shanghai"
+BR2_INIT_BUSYBOX=y
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_MDEV=y
+BR2_TARGET_GENERIC_GETTY_PORT="ttymxc0"
+BR2_TARGET_GENERIC_GETTY_BAUDRATE_115200=y
+BR2_SYSTEM_BIN_SH_BUSYBOX=y
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_DEVMON_PATH)/board/imx6ull-devmon/rootfs_overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_DEVMON_PATH)/board/imx6ull-devmon/post-build.sh"
+
+# BusyBox 默认配置没有 ntpd
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_DEVMON_PATH)/board/imx6ull-devmon/busybox.fragment"
+
+# 根文件系统镜像：ext4（eMMC 分区直接写入或解包 tar）
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+BR2_TARGET_ROOTFS_EXT2_SIZE="256M"
+# 4 KB 块：mke2fs 对 256 MB 以下的盘默认用 1 KB 块，扩容到整个 7 GB 分区后元数据多、效率低
+BR2_TARGET_ROOTFS_EXT2_MKFS_OPTIONS="-O ^64bit -b 4096"
+BR2_TARGET_ROOTFS_TAR=y
+
+# 首次启动把根文件系统扩展到整个 eMMC 分区（S01growfs 在线 resize2fs），也提供 e2fsck
+BR2_PACKAGE_E2FSPROGS=y
+BR2_PACKAGE_E2FSPROGS_RESIZE2FS=y

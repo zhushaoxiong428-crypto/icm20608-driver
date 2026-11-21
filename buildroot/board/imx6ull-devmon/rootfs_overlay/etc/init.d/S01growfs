@@ -1,0 +1,29 @@
+#!/bin/sh
+# 首次启动扩展根文件系统：烧录时写入的是 256 MB 的 ext4 镜像（dd 快），
+# 第一次启动时在线（已挂载）扩展到整个分区，之后由标记文件跳过
+MARK=/etc/.rootfs-grown
+
+case "$1" in
+start)
+	[ -f "$MARK" ] && exit 0
+	# 逐个参数匹配，不能用 sed 's/.*root=…/'：贪婪匹配会命中 nfsroot=
+	ROOTDEV=
+	for arg in $(cat /proc/cmdline); do
+		case "$arg" in
+		root=*) ROOTDEV=${arg#root=} ;;
+		esac
+	done
+	case "$ROOTDEV" in
+	/dev/mmcblk*)
+		echo "growfs: resizing $ROOTDEV to the full partition"
+		if resize2fs "$ROOTDEV"; then
+			touch "$MARK"
+			sync
+		fi
+		;;
+	*)
+		echo "growfs: root $ROOTDEV is not an MMC partition, skipped"
+		;;
+	esac
+	;;
+esac

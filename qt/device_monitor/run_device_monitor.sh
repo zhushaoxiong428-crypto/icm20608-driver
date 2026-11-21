@@ -93,6 +93,7 @@ fi
 
 # 6. 取消屏幕消隐、关掉控制台光标闪烁
 echo 0 > /sys/class/graphics/fb0/blank
+printf '\033[9;0]' > /dev/tty1 2>/dev/null # 关闭控制台空闲黑屏（默认 10 分钟后黑屏）
 echo 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null
 
 # 7. 界面崩溃时自动重启；点 Exit 正常退出（返回 0）时不再拉起。

@@ -1,0 +1,2 @@
+# S90device-monitor 读取：设备监测系统安装目录（NFS 开发环境默认为 /device-management）
+DIR=/opt/device-monitor

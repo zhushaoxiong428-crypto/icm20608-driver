@@ -1,0 +1,10 @@
+# 与开发环境相同的静态地址：接上开发主机即可远程访问（devmond -t 9100）和 NTP 校时；
+# 不接网线时 devmond、界面照常运行，时间由 SNVS RTC 维持
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+	address 192.168.10.50
+	netmask 255.255.255.0
+	gateway 192.168.10.1

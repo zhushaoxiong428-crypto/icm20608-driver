@@ -55,6 +55,7 @@ UART 使用内核已有的 i.MX 串口驱动，本项目提供用户态回环测
 .
 ├── Makefile                       # 设备树、驱动模块和 C 应用构建入口
 ├── app/                           # 单外设和联动测试程序
+├── buildroot/                     # Buildroot 外部树：defconfig、rootfs overlay、post-build、eMMC 烧录/恢复脚本
 ├── daemon/                        # 采集守护进程 devmond 与命令行客户端 devmonctl（C）
 │   └── protocol.md                # 界面与守护进程之间的文本行协议
 ├── drivers/                       # LED、按键、AP3216C、GT911 驱动
@@ -213,7 +214,7 @@ if [ -f /device-management/autostart ] && [ -x /device-management/S90device-moni
 fi
 ```
 
-放在 rcS 最后，此时 `mdev` 已创建设备节点、NFS 根意味着网络已就绪。用标志文件开关，同一个根文件系统做其他实验时 `rm /device-management/autostart` 即可，不必改系统文件。`stop` 先停界面的重启循环（pid 记在 `/tmp/device_monitor_ui.pid`）再停界面，最后向 devmond 监管进程发 SIGTERM 并等它收尾（关闭看门狗，不会复位）。
+放在 rcS 最后，此时 `mdev` 已创建设备节点、NFS 根意味着网络已就绪。Buildroot 根文件系统（见第 5 步）里脚本直接装在 `/etc/init.d`，rcS 对每个 `S??` 脚本都执行 `start`；脚本发现父进程是 rcS 时同样检查标志文件（`/opt/device-monitor/autostart`，post-build 预先创建），手动 `start` 不受标志影响。用标志文件开关，同一个根文件系统做其他实验时 `rm /device-management/autostart` 即可，不必改系统文件。`stop` 先停界面的重启循环（pid 记在 `/tmp/device_monitor_ui.pid`）再停界面，最后向 devmond 监管进程发 SIGTERM 并等它收尾（关闭看门狗，不会复位）。
 
 板上验证：`reboot` 后网络启动，无需任何手动命令，约 10 s 内 ntpd、devmond（监管 + 工作进程）和界面全部运行；`stop` 后看门狗正常关闭，等待 20 s 板子未复位、界面未被重新拉起；`start` 恢复运行。
 
@@ -240,6 +241,52 @@ echo 6 > /sys/class/backlight/backlight/brightness
 ```
 
 背光节点名称及有效亮度范围以实际 BSP 为准。
+
+### 5. 独立运行：Buildroot 根文件系统烧录到 eMMC
+
+前四步是开发环境（TFTP 内核 + NFS 根，离不开电脑）。`buildroot/` 是一个 Buildroot 外部树（`BR2_EXTERNAL`），生成可以独立运行的根文件系统，与内核、设备树一起写进 eMMC；出厂 U-Boot 不改任何配置，网络启动照常可用。
+
+| 项目 | 做法 |
+| --- | --- |
+| Buildroot | 2022.02.3；外部工具链就是编译内核、驱动、Qt 的那套 Linaro GCC 4.9.4（glibc 2.19、内核头文件 4.0），Qt 库与应用的 ABI 一致 |
+| init | BusyBox init + mdev；串口 `ttymxc0` 登录，`root` 无密码（开发用） |
+| 应用 | post-build 把仓库里编好的 devmond、devmonctl、device_monitor、测试工具、`.ko`、启动脚本装到 `/opt/device-monitor`（由 `/etc/default/device-monitor` 告诉服务脚本），`S90device-monitor` 装到 `/etc/init.d`，开机由 rcS 启动 |
+| Qt | 只装 Core、Gui、Widgets、Network、DBus（linuxfb 插件依赖）和 platforms、generic、imageformats 插件：16 MB，整套 SDK 是 28 MB |
+| 依赖检查 | post-build 用 readelf 检查应用、Qt、tslib 的每个 `NEEDED` 共享库都在根文件系统里，缺库构建失败 |
+| 网络 | eth0 静态 192.168.10.50/24；不接网线时 devmond、界面照常运行 |
+| 时间 | `/etc/localtime` = Asia/Shanghai；内核启动时从 SNVS RTC 读时间（`RTC_HCTOSYS`），连上主机后 ntpd 校时并写回 RTC |
+| 文件系统 | 256 MB ext4 镜像（4 KB 块，烧录快）；首次启动 `S01growfs` 用 resize2fs 在线扩展到整个分区 |
+| 大小 | 根文件系统 25 MB |
+
+构建（先在仓库根目录 `make`，并交叉编译 Qt 应用到 `build/qt-device-monitor`；post-build 缺文件直接报错。Qt SDK、tslib、字体位置可用 `QT_SDK`、`TSLIB_DIR`、`FONT_DIR` 覆盖）：
+
+```sh
+make -C ~/alpha/src/buildroot-2022.02.3 O=~/alpha/src/br-devmon \
+     BR2_EXTERNAL=$PWD/buildroot imx6ull_devmon_defconfig
+make -C ~/alpha/src/br-devmon          # 产物 images/rootfs.ext4、images/rootfs.tar
+```
+
+应用改动后重新 `make -C ~/alpha/src/br-devmon` 即可，post-build 每次都会重新安装。烧录前可以先不碰 eMMC 验证：把 `rootfs.tar` 解到 NFS 目录，U-Boot 里 `nfsroot` 指过去网络启动。
+
+eMMC 布局与烧录改动：
+
+```text
+mmcblk1   开头 10 MB  U-Boot（偏移 1 KB）和环境变量   不动
+          p1  FAT     zImage、各尺寸屏幕的 dtb         替换 zImage 和 imx6ull-14x14-emmc-4.3-800x480-c.dtb，原文件改名 *.factory
+          p2  ext4    根文件系统                       写入 rootfs.ext4
+mmcblk1boot0/1        U-Boot 副本                      不动
+```
+
+出厂 U-Boot 读屏幕 ID 后加载对应文件名的 dtb（ATK-4384 → 800x480），`bootargs` 为 `root=/dev/mmcblk1p2 rootwait rw`，所以只替换文件、不需要 `saveenv`。
+
+1. **完整备份**（只做一次）：网络启动，挂载主机 NFS 后 `dd if=/dev/mmcblk1 of=<nfs>/backup/emmc-factory-mmcblk1.img bs=1M`，`mmcblk1boot0`、`mmcblk1boot1` 同理；在板子上对设备、在主机上对镜像分别 `md5sum` 比对。
+2. 主机：把 `zImage`、`build/imx6ull-device-management.dtb`、`images/rootfs.ext4` 和 `buildroot/board/imx6ull-devmon/flash-emmc.sh` 放到板子能看到的 NFS 目录。
+3. 板子（网络启动）：`flash-emmc.sh <目录>`。不是 NFS 启动或 eMMC 分区已挂载时拒绝执行；`*.factory` 只在第一次保存，重复烧录不会覆盖；写完清空页缓存后从 eMMC 回读校验。
+4. 复位，不打断 U-Boot，即从 eMMC 启动。
+
+恢复出厂：网络启动（`scripts/netboot.sh` 用的开发根文件系统可以挂 NFS），然后 `restore-emmc.sh <备份目录>` 整盘写回用户区（约 13 分钟，`--boot` 同时写回 boot0/boot1）。脚本会核对镜像大小与 eMMC 用户区一致。
+
+板上验证：U-Boot 从 p1 读入 5.6 MB 的 zImage 和项目设备树；首次启动在线扩容 65536 → 1873408 块（`df` 显示 6.7 GB）；不需任何手动命令，devmond（监管 + 工作进程）和界面自动运行，主机经 TCP 9100 能收到 SYS/IMU/AP；时间为北京时间；第二次启动跳过扩容、ext4 干净挂载。重复烧录（网络启动 → 烧录 → 从 eMMC 启动）同样通过，`*.factory` 保持出厂内容。
 
 ## 操作说明
 
@@ -385,7 +432,7 @@ AP3216C 为什么每个通道读一次、不一次读 6 字节：数据手册只
 - **按键或触摸没有响应**：按键由 `devmond` 按设备名 `keyinput` 查找（见 `/tmp/devmond.log`）；触摸节点由启动脚本按名字查找。
 - **Qt 缺少平台插件或动态库**：确认部署的是 ARM 库及 `linuxfb` 插件，并检查运行环境路径。
 - **配置或记录保存失败**：确认程序目录可写、存储空间足够。程序不会自动清理旧 CSV 文件。
-- **设备在程序启动后才加载驱动**：`devmond` 打开失败的设备不会自动重试，加载驱动后重启 `devmond`（`kill $(pidof devmond)` 后再运行启动脚本），界面会自动重连。
+- **设备在程序启动后才加载驱动**：`devmond` 打开失败的设备不会自动重试，加载驱动后重启 `devmond`（`kill $(cat /tmp/devmond.pid)` 后再运行启动脚本），界面会自动重连。
 - **界面显示 devmond not reachable**：`devmond` 没有运行或套接字路径不一致，查看 `/tmp/devmond.log`。
 
 ## 后续计划
