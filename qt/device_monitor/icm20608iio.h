@@ -16,7 +16,7 @@ Q_DECLARE_METATYPE(ImuSample)
 Q_DECLARE_METATYPE(QVector<ImuSample>)
 
 /*
- * 通过 IIO 缓冲区读取 ICM-20608（驱动：third_party/icm20608-driver）。
+ * 通过 IIO 缓冲区读取 ICM-20608（驱动：icm20608-driver/）。
  *
  * 内核侧：数据就绪中断 -> 上半部记时间戳 -> 线程化下半部 SPI 读 14 字节 -> 推入 kfifo。
  * 应用侧：open() 打开全部扫描通道、设置采样率和 watermark 并启用缓冲区；

@@ -4,12 +4,14 @@
 
 项目包含设备驱动、C 测试程序和 Qt 应用源码；BSP 内核、交叉工具链、Qt 运行库和字体需单独准备。
 
-ICM20608 使用自研 IIO 驱动，以 git 子模块引入（`third_party/icm20608-driver`），克隆时带上子模块：
+仓库由两部分组成：
 
-```sh
-git clone --recursive <本仓库地址>
-# 已克隆的仓库：git submodule update --init
-```
+| 目录 | 内容 |
+| --- | --- |
+| `icm20608-driver/` | ICM-20608 六轴 IMU 的 IIO 驱动：设备树 → SPI 驱动 → regmap → IIO → 数据就绪中断 + triggered buffer，v0～v4 的开发过程与负载下的实测对比见其 [README](icm20608-driver/README.md)。原独立仓库的提交历史完整保留（`git log -- icm20608-driver`） |
+| 其余目录 | 设备监测与管理系统：LED、按键、AP3216C、GT911/GT1158 驱动，设备树，测试程序，Qt 界面 |
+
+设备监测部分移植自 [z1480754235-gif/imx6ull-device-monitor](https://github.com/z1480754235-gif/imx6ull-device-monitor)（原作者的提交保留在历史中），在此基础上适配 ALPHA V2.4 + ATK-4384 屏、支持 GT1158、改用上面的 IIO 驱动采集 ICM-20608，并补充小屏布局与启动脚本。
 
 ## 第一版功能
 
@@ -55,7 +57,7 @@ UART 使用内核已有的 i.MX 串口驱动，本项目提供用户态回环测
 │   ├── imx6ull-device-management.dts   # 项目设备树编译入口
 │   └── imx6ull-device-management.dtsi  # 项目外设配置
 ├── include/                       # 驱动与应用共享的数据结构
-├── third_party/icm20608-driver/   # 子模块：ICM20608 IIO 驱动及 iio_buffer 测试
+├── icm20608-driver/               # ICM20608 IIO 驱动、iio_buffer 等测试、实测报告
 └── qt/device_monitor/
     ├── device_monitor.pro         # qmake 工程
     ├── main.cpp                   # 应用入口
@@ -125,7 +127,7 @@ make app
 产物位置：
 
 - 设备树：`build/imx6ull-device-management.dtb`。
-- 内核模块：`drivers/*.ko`、`third_party/icm20608-driver/driver/icm20608.ko`。
+- 内核模块：`drivers/*.ko`、`icm20608-driver/driver/icm20608.ko`。
 - C 测试程序：`build/led_test`、`key_test`、`key_led_test`、`ap3216c_test`、`iio_buffer`、`uart_test`、`touch_test`。
 
 `app/touch.c` 是保留的分步调试示例，当前顶层 `make app` 不编译它。

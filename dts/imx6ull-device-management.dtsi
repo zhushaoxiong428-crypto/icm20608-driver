@@ -92,7 +92,7 @@
     status = "okay";
 
     /*
-     * ICM-20608-D 由自研 IIO 驱动（third_party/icm20608-driver）管理：
+     * ICM-20608-D 由自研 IIO 驱动（icm20608-driver/）管理：
      * regmap-spi + IIO，数据就绪中断（6D_INT = GPIO1_IO10 上升沿）驱动 triggered buffer。
      * 与 BSP 中同名的 imu@0 节点合并，这里把属性写全，不依赖 BSP 是否已有该节点
      */

@@ -31,8 +31,8 @@ dtb: | $(BUILD_DIR)
 $(BUILD_DIR):
 	mkdir -p $@
 
-# ICM-20608 使用自研 IIO 驱动（git 子模块），与 drivers/ 下的模块分开编译
-ICM_IIO_DIR := third_party/icm20608-driver
+# ICM-20608 使用自研 IIO 驱动（icm20608-driver/），与 drivers/ 下的模块分开编译
+ICM_IIO_DIR := icm20608-driver
 
 modules:
 	$(MAKE) -C "$(KERNEL_DIR)" M="$(CURDIR)/drivers" \
