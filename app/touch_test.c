@@ -11,6 +11,9 @@
 #include <linux/fb.h>
 #include <linux/input.h>
 
+/* 应用侧最多跟踪的触摸槽位数（GT911/GT1158 驱动上报 5 个） */
+#define TOUCH_MAX_SLOTS 10
+
 /* ddr3分配给屏幕的显存大小为32MiB即：lcd->fix.smem_len */
 /* 屏幕一帧画面占用的最大内存容量为 1024*600*4=2.34375MiB */
 struct lcd_device {
@@ -34,11 +37,12 @@ static int lcd_clear(struct lcd_device *lcd)
 {
 	unsigned int y;
 	size_t offset;
-	size_t bytes = (size_t)lcd->var.xres * 4;
+	size_t bytes_per_pixel = lcd->var.bits_per_pixel / 8;
+	size_t bytes = (size_t)lcd->var.xres * bytes_per_pixel;
 
 	for (y = 0; y < lcd->var.yres; y++) {
 		offset = ((size_t)y + lcd->var.yoffset) * lcd->fix.line_length +
-			(size_t)lcd->var.xoffset * 4;
+			(size_t)lcd->var.xoffset * bytes_per_pixel;
 
 		memset(lcd->memory + offset, 0, bytes);
 	}
@@ -113,10 +117,18 @@ err:
 	return -1;
 }
 
-/* 以(x,y)为中心,画一个7*7像素的蓝色方块 */
+/*
+ * 以(x,y)为中心,画一个7*7像素的蓝色方块
+ * 按 framebuffer 实际位深写像素：16 bpp 为 RGB565，32 bpp 为 XRGB8888
+ * （原实现固定按 4 字节/像素，在 16 bpp 屏上点会画到 2 倍 x 处并折行）
+ */
 static void lcd_draw_point(struct lcd_device *lcd, int x, int y)
 {
-	unsigned int pixel = 0X000000FF;
+	unsigned int bytes_per_pixel = lcd->var.bits_per_pixel / 8;
+	unsigned short pixel16 = 0x001F; /* RGB565 蓝色 */
+	unsigned int pixel32 = 0X000000FF;
+	const void *pixel = bytes_per_pixel == 2 ? (const void *)&pixel16
+						 : (const void *)&pixel32;
 	int px;
 	int py;
 	size_t offset;
@@ -129,9 +141,9 @@ static void lcd_draw_point(struct lcd_device *lcd, int x, int y)
 			}
 
 			offset = ((size_t)py + lcd->var.yoffset) * lcd->fix.line_length +
-				((size_t)px + lcd->var.xoffset) * 4;
+				((size_t)px + lcd->var.xoffset) * bytes_per_pixel;
 
-			memcpy(lcd->memory + offset, &pixel, sizeof(pixel));
+			memcpy(lcd->memory + offset, pixel, bytes_per_pixel);
 		}
 	}
 }
@@ -140,8 +152,6 @@ int main(int argc, char *argv[])
 {
 	struct lcd_device lcd;
 	struct input_event event;
-	struct input_absinfo abs_x;
-	struct input_absinfo abs_y;
 	struct pollfd input_poll;
 	struct sigaction
 		action; /* 收到某个信号时，要调用谁，处理时额外屏蔽哪些信号，以及使用什么选项。 */
@@ -149,10 +159,22 @@ int main(int argc, char *argv[])
 	int ready;
 	int fd = -1;
 	int result = EXIT_FAILURE;
-	int x;
-	int y;
-	int pressed = 0;
+	/*
+	 * 多点触控协议 B：驱动按槽位(slot)上报，每个槽位对应一根手指。
+	 * ABS_X/ABS_Y 只是内核模拟的单点坐标（跟踪最早按下的手指），
+	 * 所以这里按槽位保存每根手指的状态，每帧(SYN_REPORT)把所有按下的手指都画出来。
+	 */
+	int slot = 0;
+	int slot_x[TOUCH_MAX_SLOTS];
+	int slot_y[TOUCH_MAX_SLOTS];
+	int slot_active[TOUCH_MAX_SLOTS];
+	int active_count;
+	int was_active = 0;
+	int i;
 
+	memset(slot_x, 0, sizeof(slot_x));
+	memset(slot_y, 0, sizeof(slot_y));
+	memset(slot_active, 0, sizeof(slot_active));
 	memset(&lcd, 0, sizeof(lcd));
 	lcd.fd = -1;
 	lcd.memory = MAP_FAILED; /* 指尚未映射 */
@@ -179,20 +201,6 @@ int main(int argc, char *argv[])
 		perror("open input");
 		return EXIT_FAILURE;
 	}
-
-	/* 初始化应用里的坐标变量 */
-	if (ioctl(fd, EVIOCGABS(ABS_X), &abs_x) < 0) {
-		perror("get touch abs_x");
-		goto out;
-	}
-
-	if (ioctl(fd, EVIOCGABS(ABS_Y), &abs_y) < 0) {
-		perror("get touch abs_y");
-		goto out;
-	}
-
-	x = abs_x.value;
-	y = abs_y.value;
 
 	if (lcd_init(&lcd) < 0) {
 		goto out;
@@ -262,20 +270,33 @@ int main(int argc, char *argv[])
 			}
 
 			if (event.type == EV_ABS) {
-				if (event.code == ABS_X) {
-					x = event.value;
-				} else if (event.code == ABS_Y) {
-					y = event.value;
+				if (event.code == ABS_MT_SLOT) {
+					slot = event.value; /* 后续 ABS_MT_* 事件属于这个槽位 */
+				} else if (slot < 0 || slot >= TOUCH_MAX_SLOTS) {
+					continue;
+				} else if (event.code == ABS_MT_TRACKING_ID) {
+					slot_active[slot] = event.value >= 0; /* -1 表示该手指抬起 */
+				} else if (event.code == ABS_MT_POSITION_X) {
+					slot_x[slot] = event.value;
+				} else if (event.code == ABS_MT_POSITION_Y) {
+					slot_y[slot] = event.value;
 				}
-			} else if (event.type == EV_KEY && event.code == BTN_TOUCH) {
-				pressed = event.value != 0;
 			} else if (event.type == EV_SYN && event.code == SYN_REPORT) {
-				if (pressed) {
-					lcd_draw_point(&lcd, x, y);
-					printf("TOUCH: x = %d,y = %d\n", x, y);
-				} else {
+				active_count = 0;
+				for (i = 0; i < TOUCH_MAX_SLOTS; i++) {
+					if (!slot_active[i]) {
+						continue;
+					}
+					lcd_draw_point(&lcd, slot_x[i], slot_y[i]);
+					printf("TOUCH[%d]: x = %d,y = %d\n", i, slot_x[i], slot_y[i]);
+					active_count++;
+				}
+				if (active_count > 1) {
+					printf("POINTS: %d\n", active_count);
+				} else if (active_count == 0 && was_active) {
 					printf("RELEASED\n");
 				}
+				was_active = active_count > 0;
 			}
 		}
 	}
