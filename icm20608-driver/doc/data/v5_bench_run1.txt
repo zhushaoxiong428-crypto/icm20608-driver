@@ -1,0 +1,136 @@
+v5 bench Sat Nov 21 13:20:04 UTC 2026
+=== A1_v3 (fifo=0, 1000 Hz, watermark 1)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+samples 10013 in 10.002 s -> 1001.0 Hz
+interval us: mean 999.0  sd 2.2  min 987.4  p50 999.0  p99 1005.4  max 1011.7
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 0.8%
+interrupts/s 5012  context switches/s 8026
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== A2_v5_wm1 (fifo=1, 1000 Hz, watermark 1)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+hardware FIFO: watermark 1 (buffer watermark 1)
+samples 10014 in 10.003 s -> 1001.0 Hz
+interval us: mean 999.0  sd 1.5  min 941.4  p50 999.0  p99 1000.5  max 1006.6
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 0.7%
+interrupts/s 5197  context switches/s 8627
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== A3_v5_wm10 (fifo=1, 1000 Hz, watermark 10)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+hardware FIFO: watermark 10 (buffer watermark 10)
+samples 10013 in 10.001 s -> 1001.1 Hz
+interval us: mean 998.9  sd 2.1  min 941.9  p50 999.0  p99 1003.2  max 1013.3
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 1.0%
+interrupts/s 1539  context switches/s 1312
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== A4_v5_wm24 (fifo=1, 1000 Hz, watermark 24)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+hardware FIFO: watermark 24 (buffer watermark 24)
+samples 10025 in 10.013 s -> 1001.1 Hz
+interval us: mean 998.9  sd 1.4  min 975.3  p50 999.0  p99 1002.1  max 1006.2
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 0.7%
+interrupts/s 779  context switches/s 538
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== B1_v3_heavy (fifo=0, 1000 Hz, watermark 1)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+samples 10029 in 10.019 s -> 1000.9 Hz
+interval us: mean 999.1  sd 11.4  min 932.4  p50 998.7  p99 1010.4  max 2001.8
+gaps > 1.5 periods: estimated lost samples 1 (0.010%)
+system CPU busy: 100.0%
+interrupts/s 6389  context switches/s 9765
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== B2_v5_wm10_heavy (fifo=1, 1000 Hz, watermark 10)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+hardware FIFO: watermark 10 (buffer watermark 10)
+samples 10028 in 10.031 s -> 999.6 Hz
+interval us: mean 1000.4  sd 151.6  min 953.5  p50 998.9  p99 1002.8  max 16178.5
+gaps > 1.5 periods: estimated lost samples 15 (0.149%)
+system CPU busy: 100.0%
+interrupts/s 1872  context switches/s 1638
+FIFO overflows 1  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== C_hog5ms_v3 (fifo=0, 1000 Hz, watermark 1, rt_hog 5 ms/s)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+samples 9963 in 10.002 s -> 996.0 Hz
+interval us: mean 1004.0  sd 158.2  min 988.0  p50 999.0  p99 1005.7  max 5998.3
+gaps > 1.5 periods: estimated lost samples 50 (0.499%)
+system CPU busy: 1.4%
+interrupts/s 4993  context switches/s 7982
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== C_hog5ms_v5_wm10 (fifo=1, 1000 Hz, watermark 10, rt_hog 5 ms/s)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+hardware FIFO: watermark 10 (buffer watermark 10)
+samples 10020 in 10.009 s -> 1001.0 Hz
+interval us: mean 999.0  sd 1.3  min 979.9  p50 999.1  p99 1001.3  max 1006.1
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 1.8%
+interrupts/s 1538  context switches/s 1311
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== C_hog20ms_v3 (fifo=0, 1000 Hz, watermark 1, rt_hog 20 ms/s)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+samples 9813 in 10.002 s -> 981.0 Hz
+interval us: mean 1019.4  sd 637.7  min 989.7  p50 999.0  p99 1005.7  max 20986.9
+gaps > 1.5 periods: estimated lost samples 200 (1.997%)
+system CPU busy: 3.2%
+interrupts/s 4934  context switches/s 7863
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== C_hog20ms_v5_wm10 (fifo=1, 1000 Hz, watermark 10, rt_hog 20 ms/s)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+hardware FIFO: watermark 10 (buffer watermark 10)
+samples 10013 in 10.002 s -> 1001.0 Hz
+interval us: mean 999.0  sd 65.3  min 416.7  p50 999.1  p99 1001.9  max 2625.9
+gaps > 1.5 periods: estimated lost samples 24 (0.239%)
+system CPU busy: 3.0%
+interrupts/s 1508  context switches/s 1280
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== C_hog50ms_v3 (fifo=0, 1000 Hz, watermark 1, rt_hog 50 ms/s)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+samples 9513 in 10.002 s -> 951.0 Hz
+interval us: mean 1051.5  sd 1619.0  min 987.7  p50 999.0  p99 1005.4  max 50959.7
+gaps > 1.5 periods: estimated lost samples 500 (4.994%)
+system CPU busy: 6.1%
+interrupts/s 4817  context switches/s 7621
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== C_hog50ms_v5_wm10 (fifo=1, 1000 Hz, watermark 10, rt_hog 50 ms/s)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 10.0 s
+hardware FIFO: watermark 10 (buffer watermark 10)
+samples 9739 in 10.007 s -> 973.1 Hz
+interval us: mean 1027.6  sd 890.9  min 941.1  p50 999.2  p99 1016.3  max 36564.5
+gaps > 1.5 periods: estimated lost samples 279 (2.785%)
+system CPU busy: 6.2%
+interrupts/s 1485  context switches/s 1264
+FIFO overflows 10  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== D1_v3_100hz (fifo=0, 100 Hz, watermark 1)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 100 Hz requested, 10.0 s
+samples 1002 in 10.000 s -> 100.1 Hz
+interval us: mean 9990.0  sd 2.0  min 9979.8  p50 9990.1  p99 9996.7  max 9999.4
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 0.1%
+interrupts/s 508  context switches/s 816
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== D2_v5_wm10_100hz (fifo=1, 100 Hz, watermark 10)
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 100 Hz requested, 10.0 s
+hardware FIFO: watermark 10 (buffer watermark 10)
+samples 1010 in 10.081 s -> 100.1 Hz
+interval us: mean 9990.6  sd 50.0  min 9734.1  p50 9998.9  p99 10070.6  max 10083.4
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 0.0%
+interrupts/s 209  context switches/s 177
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+DONE

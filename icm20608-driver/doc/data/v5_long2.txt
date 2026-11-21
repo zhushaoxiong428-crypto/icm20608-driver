@@ -1,0 +1,20 @@
+=== heavy300 fifo=1 spi_rt=0 start 13:46:02
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 300.0 s
+hardware FIFO: watermark 10 (buffer watermark 10)
+samples 300317 in 300.017 s -> 1001.0 Hz
+interval us: mean 999.0  sd 0.5  min 934.0  p50 999.0  p99 999.7  max 1064.3
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 100.0%
+interrupts/s 1853  context switches/s 1628
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+=== heavy300 fifo=0 spi_rt=0 start 13:51:07
+/dev/iio:device1 (/sys/bus/iio/devices/iio:device1): 1000 Hz requested, 300.0 s
+samples 300307 in 300.011 s -> 1001.0 Hz
+interval us: mean 999.0  sd 5.3  min 922.7  p50 998.7  p99 1008.0  max 1997.4
+gaps > 1.5 periods: estimated lost samples 1 (0.000%)
+system CPU busy: 100.0%
+interrupts/s 4374  context switches/s 8294
+FIFO overflows 0  implausible samples (|a| outside 0.8-1.2 g) 0
+
+DONE

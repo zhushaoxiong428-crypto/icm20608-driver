@@ -8,7 +8,7 @@
 
 | 目录 | 内容 |
 | --- | --- |
-| `icm20608-driver/` | ICM-20608 六轴 IMU 的 IIO 驱动：设备树 → SPI 驱动 → regmap → IIO → 数据就绪中断 + triggered buffer，v0～v4 的开发过程与负载下的实测对比见其 [README](icm20608-driver/README.md)。原独立仓库的提交历史完整保留（`git log -- icm20608-driver`） |
+| `icm20608-driver/` | ICM-20608 六轴 IMU 的 IIO 驱动：设备树 → SPI 驱动 → regmap → IIO → 数据就绪中断 + triggered buffer（v3）→ 硬件 FIFO + 实时读取线程（v5，默认），v0～v5 的开发过程与负载下的实测对比见其 [README](icm20608-driver/README.md)。原独立仓库的提交历史完整保留（`git log -- icm20608-driver`） |
 | 其余目录 | 设备监测与管理系统：LED、按键、AP3216C、GT911/GT1158 驱动，设备树，测试程序，Qt 界面 |
 
 设备监测部分移植自 [z1480754235-gif/imx6ull-device-monitor](https://github.com/z1480754235-gif/imx6ull-device-monitor)（原作者的提交保留在历史中），在此基础上适配 ALPHA V2.4 + ATK-4384 屏、支持 GT1158、改用上面的 IIO 驱动采集 ICM-20608，并补充小屏布局与启动脚本。
@@ -20,7 +20,7 @@
 | LED | 字符设备控制、触摸按钮和实体按键控制 |
 | 实体按键 | GPIO 中断、延迟工作消抖、Input 事件上报 |
 | AP3216C | IIO 驱动（regmap-i2c）：照度（4 档量程，可换算 lux）、接近、红外三通道，每通道一次 I²C 传输；AP_INT 中断推送接近事件（滞回阈值，靠近/离开各一次） |
-| ICM20608 | 自研 IIO 驱动（子模块）：regmap-spi，数据就绪中断 + triggered buffer，中断上半部记内核时间戳；应用默认 100 Hz 经 IIO 缓冲区批量读取，不丢样 |
+| ICM20608 | 自研 IIO 驱动：regmap-spi，读芯片 512 字节硬件 FIFO，实时内核线程每 watermark 个采样周期批量读一次，溢出可检测，时间戳按芯片实际周期推算；`insmod icm20608.ko fifo=0` 切回 v3 的每样本数据就绪中断。应用默认 100 Hz、每批 10 个，经 IIO 缓冲区读取 |
 | GT911 / GT1158 | I²C 通信、线程化中断、最多 5 个触点的多点触摸上报；兼容 GT9147 / GT1151 / GT1158（ATK-4384 屏为 GT1158） |
 | UART3 | 使用 BSP 串口驱动进行 115200、8N1 收发回环测试 |
 | Qt 界面 | Monitor / System / Settings / Record 四页（小屏布局），数据刷新、设备状态和错误提示 |
@@ -85,7 +85,7 @@ UART 使用内核已有的 i.MX 串口驱动，本项目提供用户态回环测
 | LED | GPIO1_IO03，低电平有效 | `/dev/led0` |
 | 按键 | GPIO1_IO18，低电平有效，`KEY_ENTER` | `/dev/input/eventX` |
 | AP3216C | I2C1，7 位地址 `0x1e`；INT（AP_INT）：GPIO1_IO01，低电平有效 | `/sys/bus/iio/devices/iio:deviceN`（`in_illuminance_*`、`in_proximity_raw`、`in_intensity_ir_raw`、`events/`） |
-| ICM20608 | ECSPI3，GPIO1_IO20 软件片选，SPI Mode 0；数据就绪中断 GPIO1_IO10 上升沿 | `/sys/bus/iio/devices/iio:deviceN`、`/dev/iio:deviceN` |
+| ICM20608 | ECSPI3，GPIO1_IO20 软件片选，SPI Mode 0；数据就绪中断 GPIO1_IO10 上升沿（只有 `fifo=0` 时使用） | `/sys/bus/iio/devices/iio:deviceN`、`/dev/iio:deviceN` |
 | UART3 | UART3_TX_DATA / UART3_RX_DATA | `/dev/ttymxc2` |
 | GT911 / GT1158 | I2C2，7 位地址 `0x14`；INT：GPIO1_IO09；RST：GPIO5_IO09，低电平复位 | `/dev/input/eventX` |
 | LCD | BSP 已配置的 LCD 控制器及背光 | `/dev/fb0` |
@@ -341,7 +341,7 @@ mmcblk1boot0/1        U-Boot 副本                      不动
 | LED OFF threshold | 50 | 0～65535 |
 | Sample interval | 1000 ms | 200～60000 ms |
 
-开灯阈值必须小于关灯阈值。修改后点击 `Apply` 才生效。采集间隔决定 AP3216C 的读取周期和界面刷新周期；ICM20608 由数据就绪中断按自己的采样率采集，界面显示每个周期内全部样本的平均值。界面上 ALS 同时显示原始值和按 `in_illuminance_scale` 换算的 lux，Auto LED 阈值仍按原始值比较；温度为 ICM20608 芯片温度，不应直接当作环境温度。
+开灯阈值必须小于关灯阈值。修改后点击 `Apply` 才生效。采集间隔决定 AP3216C 的读取周期和界面刷新周期；ICM20608 按自己的采样率采集，样本先存在芯片 FIFO 里，由驱动每 100 ms 批量读出，界面显示每个周期内全部样本的平均值。界面上 ALS 同时显示原始值和按 `in_illuminance_scale` 换算的 lux，Auto LED 阈值仍按原始值比较；温度为 ICM20608 芯片温度，不应直接当作环境温度。
 
 参数保存到程序同目录的 `device_monitor.ini`，下次启动恢复。文件内容示例：
 
@@ -419,7 +419,7 @@ LED 接口使用一个字节的 ASCII 字符 `'0'` / `'1'`。UART 回环测试�
 
 界面重连靠 `QLocalSocket::stateChanged`：Qt 5.12 连接失败时先发 `error` 信号、之后才把状态改成 `UnconnectedState`，在 `error` 槽里判断状态再安排重连会漏掉，守护进程不在时界面就再也连不回去。
 
-ICM20608 为什么定时批量读、不用 `poll`：4.1 内核的 `iio_push_to_buffer()` 每推入一个样本都会唤醒 `poll` 等待者（`buffer/watermark` 只决定 `poll` 是否返回），实测 100 Hz 时用 `QSocketNotifier` 监听 fd，工作线程每秒被唤醒约 126 次；改为每 100 ms 读一次后降到约 34 次，其中约 24 次来自每秒一次的 AP3216C 读取（6 次单字节 SMBus 传输）。
+ICM20608 为什么定时批量读、不用 `poll`：4.1 内核的 `iio_push_to_buffer()` 每推入一个样本都会唤醒 `poll` 等待者（`buffer/watermark` 只决定 `poll` 是否返回），实测 100 Hz 时用 `QSocketNotifier` 监听 fd，工作线程每秒被唤醒约 126 次；改为每 100 ms 读一次后降到约 34 次，其中约 24 次来自每秒一次的 AP3216C 读取（6 次单字节 SMBus 传输）。v5 驱动由实时线程每批一次性推入 10 个样本，推入期间读者得不到运行，按设计 `poll` 每批只会被唤醒一次（测试程序的阻塞 `read` 实测如此）；但 `fifo=0` 的 v3 模式仍是每个样本唤醒一次，所以守护进程保持定时读取，两种模式都适用。
 
 AP3216C 为什么每个通道读一次、不一次读 6 字节：数据手册只给了单字节读时序，`app/ap3216c_i2c_bench.c` 实测芯片地址只在一对寄存器（低、高字节）内自增，读满 2 字节回到该对开头，从 0x0A 连续读 6 字节得到的是 IR、IR、IR。每通道读一对后，一组数据从 6 次传输 / 24 次等待降到 3 次 / 15 次（耗时 3.4 ms → 2.1 ms），工作线程降到约 25 次唤醒/秒。i.MX I²C 驱动每个字节等一次中断，所以等待次数 ≈ 每次传输 3 次 + 每字节 1 次。
 

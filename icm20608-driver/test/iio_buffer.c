@@ -1,7 +1,9 @@
 /*
  * 用 IIO 缓冲区连续采集 ICM-20608，并按样本时间戳统计采样间隔。
  *
- * 用法：./iio_buffer [采样率Hz] [秒数] [打印前几个样本]
+ * 用法：./iio_buffer [采样率Hz] [秒数] [打印前几个样本] [watermark]
+ *       watermark 写入 buffer/watermark：read 攒够这么多个才返回；v5 驱动同时把它
+ *       作为硬件 FIFO 每批读取的样本数（不写则保持默认 1）
  *       默认 1000 Hz、5 秒、打印 3 个
  *
  * 每条记录 24 字节（驱动里 scan 的布局）：
@@ -18,6 +20,7 @@
 #include <math.h>
 
 #include "cpustat.h"
+#include "procstat.h"
 
 #define REC_SIZE	24
 #define BATCH		64
@@ -52,6 +55,14 @@ static double sysfs_read_double(const char *attr)
 	if (f)
 		fclose(f);
 	return v;
+}
+
+static int sysfs_exists(const char *attr)
+{
+	char path[512];
+
+	snprintf(path, sizeof(path), "%s/%s", dev_dir, attr);
+	return access(path, R_OK) == 0;
 }
 
 /* 在 /sys/bus/iio/devices 下找 name 以 icm20608 开头的设备，返回编号 */
@@ -114,12 +125,16 @@ int main(int argc, char *argv[])
 	int rate = argc > 1 ? atoi(argv[1]) : 1000;
 	double secs = argc > 2 ? atof(argv[2]) : 5.0;
 	int print_n = argc > 3 ? atoi(argv[3]) : 3;
+	int wm = argc > 4 ? atoi(argv[4]) : 0;
 	size_t cap = (size_t)(rate * secs * 1.5) + 1024;
 	int64_t *ts = malloc(cap * sizeof(*ts));
 	uint8_t buf[REC_SIZE * BATCH];
 	char attr[64], devnode[64], rate_str[16];
 	double as, gs, tsc, toff, t_end;
 	struct cpustat c0, c1;
+	struct procstat p0, p1;
+	double ov0, ov1, t0, t1;
+	size_t odd = 0;
 	size_t n = 0, i;
 	int id, fd;
 
@@ -144,6 +159,13 @@ int main(int argc, char *argv[])
 	if (sysfs_write("sampling_frequency", rate_str))
 		return 1;
 	sysfs_write("buffer/length", "2048");
+	if (wm > 0) {
+		char wm_str[16];
+
+		snprintf(wm_str, sizeof(wm_str), "%d", wm);
+		if (sysfs_write("buffer/watermark", wm_str))
+			return 1;
+	}
 	if (sysfs_write("buffer/enable", "1"))
 		return 1;
 
@@ -156,10 +178,18 @@ int main(int argc, char *argv[])
 	}
 	printf("%s (%s): %d Hz requested, %.1f s\n", devnode, dev_dir,
 	       (int)sysfs_read_double("sampling_frequency"), secs);
+	/* v5 驱动才有这些属性；v3（fifo=0）下不存在，不打印 */
+	if (sysfs_exists("buffer/hwfifo_watermark"))
+		printf("hardware FIFO: watermark %d (buffer watermark %d)\n",
+		       (int)sysfs_read_double("buffer/hwfifo_watermark"),
+		       (int)sysfs_read_double("buffer/watermark"));
+	ov0 = sysfs_exists("fifo_overflows") ? sysfs_read_double("fifo_overflows") : 0;
 
 	/* 2. 连续读：没有数据时 read 会阻塞，直到有新样本进缓冲区 */
 	cpustat_read(&c0);
-	t_end = now_s() + secs;
+	procstat_read(&p0);
+	t0 = now_s();
+	t_end = t0 + secs;
 	while (now_s() < t_end && n < cap) {
 		ssize_t r = read(fd, buf, sizeof(buf));
 		ssize_t k;
@@ -174,6 +204,20 @@ int main(int argc, char *argv[])
 
 			memcpy(&t, rec + 16, sizeof(t));
 			ts[n] = t;
+			/*
+			 * 合理性检查：板子静止时加速度模长约 1 g；FIFO 读错位时，数据会被当成
+			 * 别的通道，模长立刻离谱
+			 */
+			{
+				double ax = be16(rec) * as, ay = be16(rec + 2) * as, az = be16(rec + 4) * as;
+				double g = sqrt(ax * ax + ay * ay + az * az) / 9.80665;
+
+				/* 打印前几个异常样本的全部原始值，区分"真的晃动"和"数据错乱" */
+				if ((g < 0.8 || g > 1.2) && ++odd <= 8)
+					printf("  implausible #%zu t=%lld |a|=%.2f g raw: %d %d %d | %d | %d %d %d\n",
+					       n, (long long)t, g, be16(rec), be16(rec + 2), be16(rec + 4),
+					       be16(rec + 6), be16(rec + 8), be16(rec + 10), be16(rec + 12));
+			}
 			if ((int)n < print_n)
 				printf("  #%zu a=(%.3f %.3f %.3f) m/s2  g=(%.4f %.4f %.4f) rad/s  T=%.2f C  t=%lld\n",
 				       n, be16(rec) * as, be16(rec + 2) * as, be16(rec + 4) * as,
@@ -183,6 +227,9 @@ int main(int argc, char *argv[])
 		}
 	}
 	cpustat_read(&c1);
+	procstat_read(&p1);
+	t1 = now_s();
+	ov1 = sysfs_exists("fifo_overflows") ? sysfs_read_double("fifo_overflows") : 0;
 	close(fd);
 	sysfs_write("buffer/enable", "0");
 
@@ -217,6 +264,10 @@ int main(int argc, char *argv[])
 		printf("gaps > 1.5 periods: estimated lost samples %zu (%.3f%%)\n",
 		       lost, 100.0 * lost / (n + lost));
 		printf("system CPU busy: %.1f%%\n", cpustat_busy_pct(&c0, &c1));
+		printf("interrupts/s %.0f  context switches/s %.0f\n",
+		       (p1.intr - p0.intr) / (t1 - t0), (p1.ctxt - p0.ctxt) / (t1 - t0));
+		printf("FIFO overflows %.0f  implausible samples (|a| outside 0.8-1.2 g) %zu\n",
+		       ov1 - ov0, odd);
 		free(dt);
 	}
 	free(ts);

@@ -43,7 +43,7 @@ modules:
 app: $(BUILD_DIR)/led_test $(BUILD_DIR)/key_test \
 	$(BUILD_DIR)/key_led_test $(BUILD_DIR)/ap3216c_i2c_bench \
 	$(BUILD_DIR)/iio_event_monitor \
-	$(BUILD_DIR)/iio_buffer $(BUILD_DIR)/uart_test \
+	$(BUILD_DIR)/iio_buffer $(BUILD_DIR)/rt_hog $(BUILD_DIR)/uart_test \
 	$(BUILD_DIR)/touch_test
 
 $(BUILD_DIR)/led_test: app/led_test.c | $(BUILD_DIR)
@@ -69,9 +69,14 @@ $(BUILD_DIR)/iio_event_monitor: app/stdout_unbuffered.c | $(BUILD_DIR)
 	$(CROSS_COMPILE)gcc -O2 -I$(BUILD_DIR)/uapi $(IIO_TOOLS)/iio_event_monitor.c \
 		$(IIO_TOOLS)/iio_utils.c $< -o $@
 
-# IIO 缓冲区连续采集测试（来自驱动仓库）：./iio_buffer [采样率Hz] [秒数] [打印样本数]
-$(BUILD_DIR)/iio_buffer: $(ICM_IIO_DIR)/test/iio_buffer.c | $(BUILD_DIR)
+# IIO 缓冲区连续采集测试（来自驱动仓库）：./iio_buffer [采样率Hz] [秒数] [打印样本数] [watermark]
+$(BUILD_DIR)/iio_buffer: $(ICM_IIO_DIR)/test/iio_buffer.c $(ICM_IIO_DIR)/test/cpustat.h \
+		$(ICM_IIO_DIR)/test/procstat.h | $(BUILD_DIR)
 	$(CROSS_COMPILE)gcc -O2 $< -o $@ -lm
+
+# 以高于驱动读取线程的实时优先级周期性占满 CPU，测抗延迟：./rt_hog <占用ms> [间隔ms] [秒数]
+$(BUILD_DIR)/rt_hog: $(ICM_IIO_DIR)/test/rt_hog.c | $(BUILD_DIR)
+	$(CROSS_COMPILE)gcc -O2 -Wall $< -o $@
 
 $(BUILD_DIR)/uart_test: app/uart_test.c | $(BUILD_DIR)
 	$(CROSS_COMPILE)gcc $< -o $@
