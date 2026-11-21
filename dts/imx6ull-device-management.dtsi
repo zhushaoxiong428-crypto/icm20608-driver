@@ -46,14 +46,10 @@
             >;
         };
 
-        pinctrl_icm20608: icm20608grp {
-            fsl,pins = <
-                MX6UL_PAD_UART2_TX_DATA__GPIO1_IO20    0X10B0
-                MX6UL_PAD_UART2_RX_DATA__ECSPI3_SCLK   0X10B1
-                MX6UL_PAD_UART2_RTS_B__ECSPI3_MISO     0X10B1
-                MX6UL_PAD_UART2_CTS_B__ECSPI3_MOSI     0X10B1
-            >;
-        };
+        /*
+         * ALPHA V2.4 本地 BSP 适配：BSP 已定义 pinctrl_ecspi3（相同四个引脚）和
+         * pinctrl_icm20608（6D_INT 中断脚），这里不再重复定义，避免 dtc 报 Duplicate label。
+         */
 
         pinctrl_uart3: uart3grp {
             fsl,pins = <
@@ -72,6 +68,11 @@
 
 &i2c1 {
     status = "okay";
+
+    /* BSP 遗留的 EVK 传感器节点：fxls8471 占用 0x1e，与 AP3216C 冲突；板上也没有 mag3110 */
+    /delete-node/ fxls8471@1e;
+    /delete-node/ mag3110@0e;
+
     ap3216c@1e {
         compatible = "liteon,ap3216c";
         reg = <0x1e>;
@@ -87,8 +88,12 @@
     fsl,spi-num-chipselects = <1>; /* 一个片选 */
     cs-gpios = <&gpio1 20 GPIO_ACTIVE_LOW>;
     pinctrl-names = "default";
-    pinctrl-0 = <&pinctrl_icm20608>;
+    pinctrl-0 = <&pinctrl_ecspi3>;
     status = "okay";
+
+    /* BSP 中已有自研 IIO 驱动用的 imu@0（同为 CS0），本项目改用字符设备驱动，先删除 */
+    /delete-node/ imu@0;
+
     icm20608@0 {
         compatible = "invensense,icm20608";
         reg = <0>;
@@ -139,11 +144,38 @@
         irq-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
         reset-gpios = <&gpio5 9 GPIO_ACTIVE_LOW>;
 
-        touchscreen-size-x = <1024>;
-        touchscreen-size-y = <600>;
+        /* ATK-4384 4.3 寸 800x480，触摸 IC 实测为 GT1158（产品 ID "1158"） */
+        touchscreen-size-x = <800>;
+        touchscreen-size-y = <480>;
 
         status = "okay";
     };
+};
+
+/*
+ * BSP 沿用 NXP EVK 配置，把 SNVS_TAMPER9 当作 LCD 复位放进 lcdif 的 pinctrl；
+ * ALPHA 板上该脚实际接触摸芯片复位（TSC_RST），这里把它从 lcdif 中去掉
+ */
+&lcdif {
+    pinctrl-0 = <&pinctrl_lcdif_dat
+                 &pinctrl_lcdif_ctrl>;
+};
+
+/*
+ * 屏幕为正点原子 ATK-4384（4.3 寸 800x480，LCD ID 引脚读出），BSP 默认是 480x272 时序。
+ * 参数取自出厂内核 imx6ull-14x14-emmc-4.3-800x480-c.dts（出厂 U-Boot 按 LCD ID 自动选用），
+ * 像素时钟 33 MHz（驱动开发指南 64.7 节写 31 MHz，以出厂实测可用的为准）
+ */
+&timing0 {
+    clock-frequency = <33000000>;
+    hactive = <800>;
+    vactive = <480>;
+    hfront-porch = <40>;
+    hback-porch = <88>;
+    hsync-len = <48>;
+    vback-porch = <32>;
+    vfront-porch = <13>;
+    vsync-len = <3>;
 };
 
 /* 关闭不用的片内电阻触摸控制器 */
