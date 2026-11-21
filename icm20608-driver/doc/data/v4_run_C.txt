@@ -1,0 +1,9 @@
+=== C: spidev other idle
+spidev poll: 1000 Hz, 10.0 s, SCHED_OTHER
+reads 10000 in 9.999 s -> 1000.0 Hz
+interval us: mean 1000.0  sd 10.9  min 689.0  p50 999.7  p99 1028.7  max 1442.7
+wakeup latency us: mean 78.3  sd 5.3  min 68.3  p50 78.0  p99 88.7  max 299.7
+overruns (woke > 1 period late): 0
+stale (same sample read twice): 17 (0.17%)
+missed chip samples (approx): 17 (0.17%)
+system CPU busy: 0.0%

@@ -1,0 +1,10 @@
+=== E: spidev fifo loaded
+spidev poll: 1000 Hz, 10.0 s, SCHED_FIFO 50
+reads 10000 in 9.999 s -> 1000.0 Hz
+interval us: mean 1000.0  sd 19.5  min 389.0  p50 1000.0  p99 1013.0  max 1713.0
+wakeup latency us: mean 21.7  sd 3.8  min 15.7  p50 21.7  p99 27.3  max 250.3
+overruns (woke > 1 period late): 0
+stale (same sample read twice): 14 (0.14%)
+missed chip samples (approx): 14 (0.14%)
+system CPU busy: 100.0%
+load stopped

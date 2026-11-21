@@ -1,0 +1,19 @@
+=== D2: spidev other HEAVY
+spidev poll: 1000 Hz, 10.0 s, SCHED_OTHER
+reads 10000 in 14.243 s -> 702.1 Hz
+interval us: mean 1424.4  sd 2477.2  min 273.7  p50 365.0  p99 10032.0  max 20093.7
+wakeup latency us: mean 3425089.7  sd 1369538.5  min 71.3  p50 4287455.3  p99 4615213.3  max 4641813.0
+overruns (woke > 1 period late): 9937
+stale (same sample read twice): 4411 (44.11%)
+missed chip samples (approx): 8655 (60.76%)
+system CPU busy: 100.0%
+=== E2: spidev fifo HEAVY
+spidev poll: 1000 Hz, 10.0 s, SCHED_FIFO 50
+reads 10000 in 9.999 s -> 1000.0 Hz
+interval us: mean 1000.0  sd 58.2  min 388.7  p50 998.7  p99 1182.7  max 2257.3
+wakeup latency us: mean 30.4  sd 20.6  min 18.3  p50 25.0  p99 132.0  max 642.7
+overruns (woke > 1 period late): 0
+stale (same sample read twice): 123 (1.23%)
+missed chip samples (approx): 123 (1.23%)
+system CPU busy: 100.0%
+load stopped

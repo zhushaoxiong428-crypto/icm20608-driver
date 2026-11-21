@@ -1,0 +1,23 @@
+--- Makefile.orig	2026-11-16 18:15:34.944305115 -0900
++++ Makefile	2026-11-16 18:15:34.945305123 -0900
+@@ -416,6 +416,7 @@
+ 	imx6ull-14x14-ddr3-arm2-wm8958.dtb \
+ 	imx6ull-14x14-evk.dtb \
+ 	imx6ull-alientek-emmc.dtb \
++	imx6ull-alientek-emmc-spidev.dtb \
+ 	imx6ull-alientek-nand.dtb \
+ 	imx6ull-14x14-evk-btwifi.dtb \
+ 	imx6ull-14x14-evk-emmc.dtb \
+--- imx6ull-alientek-emmc-spidev.dts.orig	2026-11-17 04:25:23.817736480 -0900
++++ imx6ull-alientek-emmc-spidev.dts	2026-11-16 18:15:34.941305089 -0900
+@@ -0,0 +1,10 @@
++/*
++ * 仅用于 v4 对照实验：与 imx6ull-alientek-emmc.dts 完全相同，
++ * 只把 IMU 节点交给通用的 spidev 驱动，用户态通过 /dev/spidev2.0 直接访问。
++ * 4.1 的 spidev 只匹配 "rohm,dh2228fv"。
++ */
++#include "imx6ull-alientek-emmc.dts"
++
++&icm20608 {
++	compatible = "rohm,dh2228fv";
++};

@@ -1,0 +1,9 @@
+=== B2: driver HEAVY
+/dev/iio:device0 (/sys/bus/iio/devices/iio:device0): 1000 Hz requested, 10.0 s
+samples 10014 in 10.004 s -> 1000.9 Hz
+interval us: mean 999.1  sd 5.3  min 935.3  p50 999.0  p99 1011.0  max 1064.0
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 100.0%
+ 41:      10015  gpio-mxc  10 Edge      icm20608-drdy
+  106 root      0:00 grep -i irq/41
+load stopped

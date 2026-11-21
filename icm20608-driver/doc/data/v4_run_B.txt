@@ -1,0 +1,8 @@
+=== B: driver loaded
+/dev/iio:device0 (/sys/bus/iio/devices/iio:device0): 1000 Hz requested, 10.0 s
+samples 10011 in 10.001 s -> 1000.9 Hz
+interval us: mean 999.1  sd 3.0  min 946.3  p50 999.0  p99 1002.7  max 1052.0
+gaps > 1.5 periods: estimated lost samples 0 (0.000%)
+system CPU busy: 100.0%
+ 41:      20025  gpio-mxc  10 Edge      icm20608-drdy
+load stopped
