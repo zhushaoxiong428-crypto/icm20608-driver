@@ -10,12 +10,38 @@
 #include <QSettings>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
 #include <linux/input.h>
+
+/*
+ * 查找按键的 input 节点。eventX 编号随驱动加载顺序变化（如触摸屏先加载就会占用较小编号），
+ * 不能写死，这里按 key_drv 注册的设备名 "keyinput" 在 sysfs 中查找。
+ * 也可用环境变量 DEVICE_MONITOR_KEY_DEV 直接指定，如 /dev/input/event1。
+ */
+static QString findKeyDevice()
+{
+	const QByteArray env = qgetenv("DEVICE_MONITOR_KEY_DEV");
+	if (!env.isEmpty()) {
+		return QString::fromLocal8Bit(env);
+	}
+
+	QDir dir("/sys/class/input");
+	const QStringList events = dir.entryList(QStringList() << "event*",
+		QDir::Dirs | QDir::System | QDir::NoDotAndDotDot);
+	for (const QString &event : events) {
+		QFile name(dir.filePath(event + "/device/name"));
+		if (name.open(QIODevice::ReadOnly) && name.readAll().trimmed() == "keyinput") {
+			return "/dev/input/" + event;
+		}
+	}
+
+	return QString();
+}
 
 /* 冒号后边叫成员初始化列表，进入函数体 {} 之前执行 */
 MainWindow::MainWindow(QWidget *parent)
@@ -84,9 +110,17 @@ MainWindow::MainWindow(QWidget *parent)
 
 	Thread.start(); /* 启动工作线程 */
 
-	keyFd = ::open("/dev/input/event2", O_RDONLY | O_NONBLOCK);
+	const QString keyDevice = findKeyDevice();
+	if (keyDevice.isEmpty()) {
+		qWarning() << "key input device \"keyinput\" not found";
+	} else {
+		keyFd = ::open(keyDevice.toLocal8Bit().constData(), O_RDONLY | O_NONBLOCK);
+		if (keyFd < 0) {
+			qWarning() << "open key" << keyDevice << "failed:" << strerror(errno);
+		}
+	}
+
 	if (keyFd < 0) {
-		qWarning() << "open key failed:" << strerror(errno);
 		ui->keyLabel->setText("KEY: unavailable");
 	} else {
 		keyNotifier = new QSocketNotifier(
