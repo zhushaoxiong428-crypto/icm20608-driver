@@ -202,7 +202,22 @@ cat /proc/bus/input/devices
 
 `devmond` 选项：`-d` 守护进程化（日志写 `-l`，默认 `/tmp/devmond.log`）、`-s` 套接字（默认 `/tmp/devmond.sock`）、`-t` TCP 端口、`-w` 硬件看门狗超时秒数、`-n` 不用监管进程（调试用）、`-c` 配置文件、`-r` 录制目录（默认都在可执行文件旁）、`-p` pid 文件。停止：`kill $(cat /tmp/devmond.pid)`（只发给监管进程，它停掉工作进程并正常关闭看门狗；`pidof devmond` 会同时返回监管和工作两个进程）。
 
-### 3. 准备 Qt 运行环境
+### 3. 开机自启
+
+`qt/device_monitor/S90device-monitor` 是 SysV 风格服务脚本（`start|stop|restart|status`），与 `run_device_monitor.sh` 一起放到 `/device-management`。在根文件系统 `/etc/init.d/rcS` 末尾加：
+
+```sh
+# 设备监测系统开机自启：touch /device-management/autostart 开启，rm 关闭
+if [ -f /device-management/autostart ] && [ -x /device-management/S90device-monitor ]; then
+	/device-management/S90device-monitor start
+fi
+```
+
+放在 rcS 最后，此时 `mdev` 已创建设备节点、NFS 根意味着网络已就绪。用标志文件开关，同一个根文件系统做其他实验时 `rm /device-management/autostart` 即可，不必改系统文件。`stop` 先停界面的重启循环（pid 记在 `/tmp/device_monitor_ui.pid`）再停界面，最后向 devmond 监管进程发 SIGTERM 并等它收尾（关闭看门狗，不会复位）。
+
+板上验证：`reboot` 后网络启动，无需任何手动命令，约 10 s 内 ntpd、devmond（监管 + 工作进程）和界面全部运行；`stop` 后看门狗正常关闭，等待 20 s 板子未复位、界面未被重新拉起；`start` 恢复运行。
+
+### 4. 准备 Qt 运行环境
 
 确保动态链接器能够找到 Qt 和 tslib 的库，并设置平台插件路径。项目调试环境的 Qt、tslib 分别放在 `/usr/lib/arm-qt`、`/usr/lib/arm-tslib`，字体放在 `/usr/share/fonts`。
 

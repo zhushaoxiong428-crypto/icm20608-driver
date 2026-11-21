@@ -95,7 +95,9 @@ fi
 echo 0 > /sys/class/graphics/fb0/blank
 echo 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null
 
-# 7. 界面崩溃时自动重启；点 Exit 正常退出（返回 0）时不再拉起
+# 7. 界面崩溃时自动重启；点 Exit 正常退出（返回 0）时不再拉起。
+#    循环所在 shell 的 pid 记在 /tmp/device_monitor_ui.pid，S90device-monitor stop 先停它，界面就不会被重新拉起
+echo $$ > /tmp/device_monitor_ui.pid
 while true; do
 	./device_monitor "$@"
 	rc=$?
@@ -103,3 +105,4 @@ while true; do
 	echo "device_monitor exited with status $rc, restarting in 2 s"
 	sleep 2
 done
+rm -f /tmp/device_monitor_ui.pid

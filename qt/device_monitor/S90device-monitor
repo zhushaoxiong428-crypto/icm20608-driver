@@ -1,0 +1,65 @@
+#!/bin/sh
+# 设备监测系统的 SysV 风格服务脚本
+#
+# 开机自启：/etc/init.d/rcS 末尾在 /device-management/autostart 存在时执行 "S90device-monitor start"
+#           （touch /device-management/autostart 开启，rm 关闭，不必改系统文件）
+# 手动：    S90device-monitor start|stop|restart|status
+#
+# start 在后台运行 run_device_monitor.sh：加载驱动 → ntpd → devmond（监管 + 看门狗）→ 界面（崩溃重启循环）
+# stop  先停界面的重启循环再停界面，最后让 devmond 监管进程正常退出（停工作进程、关闭看门狗，不会复位）
+
+DIR=/device-management
+UI_PID=/tmp/device_monitor_ui.pid
+DEVMOND_PID=/tmp/devmond.pid
+
+running() {
+	[ -f "$1" ] && kill -0 "$(cat "$1")" 2>/dev/null
+}
+
+case "$1" in
+start)
+	if running "$UI_PID" || running "$DEVMOND_PID"; then
+		echo "device monitor already running"
+		exit 0
+	fi
+	"$DIR/run_device_monitor.sh" > /tmp/dm.log 2>&1 &
+	echo "device monitor starting (logs: /tmp/dm.log, /tmp/devmond.log)"
+	;;
+stop)
+	# 重启循环必须先停，否则界面被杀后会被重新拉起
+	running "$UI_PID" && kill "$(cat "$UI_PID")"
+	killall device_monitor 2>/dev/null
+	rm -f "$UI_PID"
+	if running "$DEVMOND_PID"; then
+		kill "$(cat "$DEVMOND_PID")"
+		# 等监管进程收尾（工作进程最多 5 s），避免 restart 时新实例拿不到 pid 文件锁
+		i=0
+		while running "$DEVMOND_PID" && [ $i -lt 8 ]; do
+			sleep 1
+			i=$((i + 1))
+		done
+	fi
+	echo "device monitor stopped"
+	;;
+restart)
+	"$0" stop
+	"$0" start
+	;;
+status)
+	if running "$DEVMOND_PID"; then
+		echo "devmond: running (supervisor $(cat "$DEVMOND_PID"), processes: $(pidof devmond))"
+	else
+		echo "devmond: stopped"
+	fi
+	if running "$UI_PID"; then
+		echo "ui: running (loop $(cat "$UI_PID"), device_monitor $(pidof device_monitor))"
+	else
+		echo "ui: stopped"
+	fi
+	[ -f "$DIR/autostart" ] && echo "autostart: on" || echo "autostart: off"
+	;;
+*)
+	echo "usage: $0 start|stop|restart|status"
+	exit 1
+	;;
+esac
