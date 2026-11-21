@@ -1,13 +1,9 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include <QHash>
 #include <QMainWindow>
-#include <QThread>
-#include <QSocketNotifier>
-#include <QFile>
-#include <QVector>
-
-#include "icm20608iio.h"
+#include <QString>
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -15,8 +11,12 @@ class MainWindow;
 }
 QT_END_NAMESPACE
 
-class SensorWorker;
+class DaemonClient;
 
+/*
+ * 界面只做显示和下发命令：采集、LED、按键、自动亮灯、参数保存、CSV 录制都在 devmond 里，
+ * 界面退出不影响采集和录制；守护进程推送什么状态，界面就显示什么。
+ */
 class MainWindow : public QMainWindow
 {
 	Q_OBJECT
@@ -29,51 +29,35 @@ private slots:
 	void on_pushButton_clicked();
 	void on_exitButton_clicked();
 	void on_readSensorButton_clicked();
-	void readKeyData();
 	void on_autoModeCheckBox_toggled(bool checked);
 	void on_applySettingsButton_clicked();
 	void on_recordButton_clicked();
 
-	void updateApData(int ir, int als, int ps, int flags, double luxPerCount);
-	void updateProximity(bool near, qint64 timestampNs);
-	void showApError(const QString &message);
-	void updateIcmData(const QVector<ImuSample> &samples, double rateHz);
-	void showIcmError(const QString &message);
-
-signals:
-	void requestApRead();
-	void requestSampleInterval(int intervalMs);
+	void onConnectionChanged(bool connected, const QString &reason);
+	void onMessage(const QString &type, const QHash<QString, QString> &fields);
 
 private:
+	typedef QHash<QString, QString> Fields;
+
+	void updateConfig(const Fields &f);
+	void updateLed(const Fields &f);
+	void updateKey(const Fields &f);
+	void updateRecord(const Fields &f);
+	void updateAp(const Fields &f);
+	void updateProximity(const Fields &f);
+	void updateImu(const Fields &f);
+	void showApError(const QString &message);
+	void showImuError(const QString &message);
+	void handleReply(bool ok, const Fields &f);
+	void setControlsEnabled(bool enabled);
+
 	Ui::MainWindow *ui;
+	DaemonClient *client;
 
-	int ledFd;
-	bool ledOn;
+	bool ledAvailable;
 	bool autoMode;
-	int lightOnThreshold;
-	int lightOffThreshold;
-	int sampleIntervalMs;
-	int imuRateHz; /* ICM20608 IIO 采样率，ini 中 sensor/imuRateHz，4~1000 */
-	int keyFd;
-	QSocketNotifier *keyNotifier;
-
-	QThread Thread;
-	SensorWorker *Worker;
-
-	int proximityState; /* -1 未知（还没有事件），0 远，1 近 */
-	int proximityEvents; /* 收到的接近事件数 */
-
 	bool recording;
-	qint64 recordStartNs; /* 开始记录的时刻，与 IIO 时间戳同为 CLOCK_REALTIME */
-	QFile apRecordFile;
-	QFile icmRecordFile;
-
-	bool setLed(bool on);
-	void controlLedByLight(int als);
-	void loadSettings();
-	void startRecording();
-	void stopRecording(const QString &error = QString());
-	void appendRecord(QFile &file, const QByteArray &row);
+	int proximityState; /* -1 未知，0 远，1 近 */
 };
 
 #endif /* MAINWINDOW_H */

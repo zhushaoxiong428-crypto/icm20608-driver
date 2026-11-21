@@ -25,7 +25,8 @@
 | UART3 | 使用 BSP 串口驱动进行 115200、8N1 收发回环测试 |
 | Qt 界面 | Monitor / Settings / Record 三页（小屏布局），数据刷新、设备状态和错误提示 |
 | 自动控制 | ALS 双阈值控制 LED，支持手动／自动切换 |
-| 参数设置 | 修改光照阈值和采集间隔，使用 QSettings 保存、恢复 |
+| 参数设置 | 修改光照阈值和采集间隔，由 devmond 校验并原子写回 ini |
+| 采集守护进程 | devmond：epoll + timerfd + signalfd 单线程事件循环，Unix 域套接字文本行协议，多客户端；界面退出后采集与录制继续 |
 | 数据记录 | 两路传感器分别保存带时间戳的 CSV，支持开始／停止记录 |
 
 UART 使用内核已有的 i.MX 串口驱动，本项目提供用户态回环测试程序。
@@ -51,6 +52,8 @@ UART 使用内核已有的 i.MX 串口驱动，本项目提供用户态回环测
 .
 ├── Makefile                       # 设备树、驱动模块和 C 应用构建入口
 ├── app/                           # 单外设和联动测试程序
+├── daemon/                        # 采集守护进程 devmond 与命令行客户端 devmonctl（C）
+│   └── protocol.md                # 界面与守护进程之间的文本行协议
 ├── drivers/                       # LED、按键、AP3216C、GT911 驱动
 │   └── Makefile                   # 内核模块 Kbuild 配置
 ├── dts/
@@ -61,9 +64,10 @@ UART 使用内核已有的 i.MX 串口驱动，本项目提供用户态回环测
 └── qt/device_monitor/
     ├── device_monitor.pro         # qmake 工程
     ├── main.cpp                   # 应用入口
-    ├── mainwindow.h/.cpp          # 界面、控制、配置、CSV 记录
-    ├── mainwindow.ui              # Designer 界面
-    └── sensorworker.h/.cpp        # 工作线程中的传感器采集
+    ├── mainwindow.h/.cpp          # 显示守护进程推送的状态，按钮转成命令
+    ├── daemonclient.h/.cpp        # QLocalSocket 客户端，断线自动重连
+    ├── mainwindow.ui              # Designer 界面（ui_800x480/、ui_480x272/ 为小屏布局）
+    └── run_device_monitor.sh      # 开发板启动脚本：驱动 → devmond → 界面
 ```
 
 `build/`、内核模块编译产物、Qt Creator 的本机配置、运行配置和采集文件不提交到仓库。
@@ -140,9 +144,11 @@ make clean KERNEL_DIR=/path/to/bsp/linux
 
 `clean` 会清理驱动构建产物，并删除整个项目 `build/` 目录，包括放在其中的 Qt 构建目录。
 
+顶层 `make` 同时生成采集守护进程 `build/devmond` 和命令行客户端 `build/devmonctl`（也可单独 `make daemon`）。
+
 ### 2. Qt 应用
 
-Qt 应用独立编译，顶层 `make` 不包含 Qt 工程。使用为 ARM 交叉编译好的 Qt 5.12.9 的 `qmake`：
+Qt 应用独立编译，顶层 `make` 不包含 Qt 工程（需要 QtNetwork，用于 QLocalSocket）。使用为 ARM 交叉编译好的 Qt 5.12.9 的 `qmake`：
 
 ```sh
 mkdir -p build/qt-device-monitor
@@ -189,7 +195,9 @@ cat /proc/bus/input/devices
 
 第一次部署时先确认驱动成功绑定、设备节点存在，再启动 Qt。各模块不要求按以上顺序加载，但 Input 节点编号可能随加载顺序改变。
 
-也可以直接用 `qt/device_monitor/run_device_monitor.sh`（与 `device_monitor`、`.ko` 放在同一目录）：它加载驱动、按设备名查找触摸和按键节点、设置 Qt / tslib 环境变量后启动程序，不修改 `/etc/profile`。
+推荐直接用 `qt/device_monitor/run_device_monitor.sh`（与 `devmond`、`devmonctl`、`device_monitor`、`.ko` 放在同一目录）：它加载驱动、以守护进程方式启动 `devmond`（已在运行则跳过）、按设备名查找触摸节点、设置 Qt / tslib 环境变量后启动界面，不修改 `/etc/profile`。`--daemon-only` 只启动 `devmond`，可无屏幕运行。
+
+`devmond` 选项：`-d` 守护进程化（日志写 `-l`，默认 `/tmp/devmond.log`）、`-s` 套接字（默认 `/tmp/devmond.sock`）、`-c` 配置文件、`-r` 录制目录（默认都在可执行文件旁）、`-p` pid 文件。停止：`kill $(pidof devmond)`。
 
 ### 3. 准备 Qt 运行环境
 
@@ -250,7 +258,7 @@ intervalMs=1000
 imuRateHz=100
 ```
 
-每次启动仍为手动模式。配置不合理时使用默认值；保存失败时，本次应用的参数仍生效，但不保证下次恢复。
+参数由 `devmond` 校验、立即生效并原子写回 ini（先写临时文件、fsync，再 rename）。`devmond` 每次启动为手动模式。配置不合理时使用默认值；保存失败时，本次应用的参数仍生效，但不保证下次恢复。修改 ini 后可 `kill -HUP $(pidof devmond)` 重新读取。
 
 ### CSV 数据记录
 
@@ -265,7 +273,7 @@ records/icm20608_年月日_时分秒_毫秒.csv
 
 每收到一次成功的采集结果追加一行，时间戳使用界面处理该结果时的开发板系统时间。默认每路约 1 秒一行；手动读取 AP 会额外追加一行。传感器失败期间没有对应数据行。记录前应先确认开发板系统时间。
 
-点击 `Exit` 正常退出时，会结束工作线程、关闭记录文件、关灯并关闭设备。当前没有安装 Linux 退出信号处理，默认 `Ctrl+C` 不执行 C++ 析构清理。
+录制由 `devmond` 完成：点击 `Exit` 只关闭界面，录制、LED 状态和采集继续，重新打开界面会自动连上并显示当前状态。`devmond` 收到 `SIGTERM` / `SIGINT` 时停止录制并刷盘、关灯、关闭 IIO 缓冲区和接近中断后退出。
 
 ## 独立测试示例
 
@@ -282,6 +290,9 @@ cat /sys/bus/iio/devices/iio:device*/in_proximity_raw   # AP3216C 各通道（�
 ./iio_buffer 100 5 3   # 100 Hz 采集 5 秒，统计采样间隔和丢样
 ./touch_test /dev/input/event1
 ./uart_test /dev/ttymxc2
+./devmonctl STATUS               # 守护进程当前状态
+./devmonctl watch 5 AP IMU PROX  # 打印 5 秒内的推送
+./devmonctl LED toggle; ./devmonctl REC start; ./devmonctl CONFIG on=10 off=40 interval=500
 ```
 
 LED 接口使用一个字节的 ASCII 字符 `'0'` / `'1'`。UART 回环测试需短接 UART3 的 TX 与 RX；它验证本机串口收发，不包含外部传感器协议。
@@ -289,22 +300,26 @@ LED 接口使用一个字节的 ASCII 字符 `'0'` / `'1'`。UART 回环测试�
 ## 程序执行结构
 
 ```text
-Linux 驱动 / Input 事件
-          │
-          ├── SensorWorker（工作线程）
-          │      ├── QTimer 定时读取 AP3216C（IIO sysfs）；接近事件 fd 用 QSocketNotifier 监听
-          │      ├── ICM20608：数据就绪中断 → 内核 IIO 缓冲区；每 100 ms 批量读走（Icm20608Iio）
-          │      └── 信号传回采集结果（ICM 为一个周期的样本批次）与错误
-          │
-          └── MainWindow（界面线程）
-                 ├── 更新监测数据与状态
-                 ├── QSocketNotifier 读取实体按键
-                 ├── 手动 / 自动 LED 控制
-                 ├── QSettings 保存参数
-                 └── 小规模 CSV 文件记录
+                      devmond（C，单线程，一个 epoll）
+ 驱动 / sysfs / input ─┬─ signalfd   SIGTERM/SIGINT 正常退出，SIGHUP 重读配置
+                      ├─ timerfd    采集周期：读 AP3216C、自动亮灯、发布 IMU 平均值、刷新 CSV
+                      ├─ timerfd    100 ms：读走 ICM20608 IIO 缓冲区，逐样本录制
+                      ├─ AP 事件 fd  AP_INT 接近中断
+                      ├─ 按键 fd     手动模式下翻转 LED
+                      └─ Unix 域套接字 /tmp/devmond.sock（daemon/protocol.md）
+                                 │  推送 AP / IMU / PROX / LED / KEY / CONFIG / REC
+                                 │  命令 LED / AUTO / CONFIG / READ / REC / STATUS
+                 ┌───────────────┴───────────────┐
+        Qt 界面（QLocalSocket，断线重连）     devmonctl（命令行）
 ```
 
-显示与触摸分别通过 framebuffer 和 Input / tslib 接入。界面线程不直接等待传感器采集，运行时的定时器间隔修改通过队列信号交给工作线程。
+拆分的目的：采集与录制不依赖界面（界面退出或崩溃不影响，可无屏幕运行）；界面只剩一个线程，不再接触任何设备文件；同一份数据可以同时给多个客户端。
+
+`devmond` 的设计要点：所有输入都是 fd，一个线程一个 epoll，没有锁；信号用 signalfd 同步处理，没有异步信号处理函数的重入问题；客户端套接字非阻塞，每个客户端一个输入行缓冲和输出队列，写不完的留在队列里等 `EPOLLOUT`，输出积压超过 256 KB 的慢客户端直接断开，不拖住采集；客户端断开先标记、回调结束后再释放，避免在处理某个客户端的命令时把它释放掉；`flock` 加锁的 pid 文件保证只运行一份（进程崩溃时内核自动释放锁）；`-d` 用两次 fork 脱离终端。
+
+实测（100 Hz IMU + 1 s 采集周期，一个界面连接）：`devmond` 每秒约 25 次唤醒，与拆分前的采集线程相同，套接字推送没有带来额外开销；界面每秒约 1 次唤醒，CPU 均接近 0。界面关闭期间录制持续（ICM CSV 每秒约 100 行）；`devmond` 重启后界面 1~3 秒内自动重连。
+
+界面重连靠 `QLocalSocket::stateChanged`：Qt 5.12 连接失败时先发 `error` 信号、之后才把状态改成 `UnconnectedState`，在 `error` 槽里判断状态再安排重连会漏掉，守护进程不在时界面就再也连不回去。
 
 ICM20608 为什么定时批量读、不用 `poll`：4.1 内核的 `iio_push_to_buffer()` 每推入一个样本都会唤醒 `poll` 等待者（`buffer/watermark` 只决定 `poll` 是否返回），实测 100 Hz 时用 `QSocketNotifier` 监听 fd，工作线程每秒被唤醒约 126 次；改为每 100 ms 读一次后降到约 34 次，其中约 24 次来自每秒一次的 AP3216C 读取（6 次单字节 SMBus 传输）。
 
@@ -316,10 +331,11 @@ AP3216C 为什么每个通道读一次、不一次读 6 字节：数据手册只
 
 - **模块加载但没有设备节点**：查看 `dmesg`，检查设备树是否实际加载、`compatible` 是否匹配及 `probe()` 是否成功。
 - **提示 GPIO 被占用**：检查 BSP 是否仍启用了同引脚的旧设备或 pinctrl 配置。
-- **按键或触摸没有响应**：重新确认 Input 节点；Qt 按键路径及 tslib 触摸路径可能需要调整。
+- **按键或触摸没有响应**：按键由 `devmond` 按设备名 `keyinput` 查找（见 `/tmp/devmond.log`）；触摸节点由启动脚本按名字查找。
 - **Qt 缺少平台插件或动态库**：确认部署的是 ARM 库及 `linuxfb` 插件，并检查运行环境路径。
 - **配置或记录保存失败**：确认程序目录可写、存储空间足够。程序不会自动清理旧 CSV 文件。
-- **设备在程序启动后才加载驱动**：当前传感器打开失败不会自动重新打开，加载驱动后重启 Qt 程序。
+- **设备在程序启动后才加载驱动**：`devmond` 打开失败的设备不会自动重试，加载驱动后重启 `devmond`（`kill $(pidof devmond)` 后再运行启动脚本），界面会自动重连。
+- **界面显示 devmond not reachable**：`devmond` 没有运行或套接字路径不一致，查看 `/tmp/devmond.log`。
 
 ## 后续计划
 

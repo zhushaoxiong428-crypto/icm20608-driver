@@ -1,4 +1,4 @@
-QT       += core gui
+QT       += core gui network   # network：QLocalSocket 连接 devmond
 
 INCLUDEPATH += $$PWD/../../include
 
@@ -18,17 +18,13 @@ DEFINES += QT_DEPRECATED_WARNINGS
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
 SOURCES += \
-    ap3216ciio.cpp \
-    icm20608iio.cpp \
+    daemonclient.cpp \
     main.cpp \
-    mainwindow.cpp \
-    sensorworker.cpp
+    mainwindow.cpp
 
 HEADERS += \
-    ap3216ciio.h \
-    icm20608iio.h \
-    mainwindow.h \
-    sensorworker.h
+    daemonclient.h \
+    mainwindow.h
 
 # 屏幕布局：默认 ATK-4384（4.3 寸 800x480）；qmake LCD=480x272（ATK-4342）或 LCD=1024x600（7 寸）
 # 各 .ui 的控件 objectName 相同，uic 都生成 ui_mainwindow.h，C++ 代码无需改动
