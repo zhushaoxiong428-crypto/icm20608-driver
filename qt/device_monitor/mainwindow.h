@@ -34,7 +34,8 @@ private slots:
 	void on_applySettingsButton_clicked();
 	void on_recordButton_clicked();
 
-	void updateApData(int ir, int als, int ps, int flags);
+	void updateApData(int ir, int als, int ps, int flags, double luxPerCount);
+	void updateProximity(bool near, qint64 timestampNs);
 	void showApError(const QString &message);
 	void updateIcmData(const QVector<ImuSample> &samples, double rateHz);
 	void showIcmError(const QString &message);
@@ -58,6 +59,9 @@ private:
 
 	QThread Thread;
 	SensorWorker *Worker;
+
+	int proximityState; /* -1 未知（还没有事件），0 远，1 近 */
+	int proximityEvents; /* 收到的接近事件数 */
 
 	bool recording;
 	qint64 recordStartNs; /* 开始记录的时刻，与 IIO 时间戳同为 CLOCK_REALTIME */

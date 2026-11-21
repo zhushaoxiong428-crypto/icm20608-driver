@@ -46,6 +46,13 @@
             >;
         };
 
+        /* AP3216C INT（原理图 AP_INT）：低电平有效，打开内部上拉。BSP 中该脚只被已关闭的 tsc 使用 */
+        pinctrl_ap3216c_int: ap3216cintgrp {
+            fsl,pins = <
+                MX6UL_PAD_GPIO1_IO01__GPIO1_IO01    0XF080
+            >;
+        };
+
         /*
          * ALPHA V2.4 本地 BSP 适配：BSP 已定义 pinctrl_ecspi3（相同四个引脚）和
          * pinctrl_icm20608（6D_INT 中断脚），这里不再重复定义，避免 dtc 报 Duplicate label。
@@ -76,6 +83,11 @@
     ap3216c@1e {
         compatible = "liteon,ap3216c";
         reg = <0x1e>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_ap3216c_int>;
+        /* 接近事件：PS 越过阈值时 INT 拉低，驱动读状态后写 1 清除 */
+        interrupt-parent = <&gpio1>;
+        interrupts = <1 IRQ_TYPE_LEVEL_LOW>;
         status = "okay";
     };
 };

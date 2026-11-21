@@ -41,7 +41,8 @@ modules:
 		ARCH=arm CROSS_COMPILE=$(CROSS_COMPILE) modules
 
 app: $(BUILD_DIR)/led_test $(BUILD_DIR)/key_test \
-	$(BUILD_DIR)/key_led_test $(BUILD_DIR)/ap3216c_test \
+	$(BUILD_DIR)/key_led_test $(BUILD_DIR)/ap3216c_i2c_bench \
+	$(BUILD_DIR)/iio_event_monitor \
 	$(BUILD_DIR)/iio_buffer $(BUILD_DIR)/uart_test \
 	$(BUILD_DIR)/touch_test
 
@@ -54,8 +55,19 @@ $(BUILD_DIR)/key_test: app/key_test.c | $(BUILD_DIR)
 $(BUILD_DIR)/key_led_test: app/key_led_test.c | $(BUILD_DIR)
 	$(CROSS_COMPILE)gcc $< -o $@
 
-$(BUILD_DIR)/ap3216c_test: app/ap3216c_test.c include/ap3216c_data.h | $(BUILD_DIR)
-	$(CROSS_COMPILE)gcc $< -o $@
+# AP3216C 连续读行为验证与读取方式开销对比（i2c-dev）
+$(BUILD_DIR)/ap3216c_i2c_bench: app/ap3216c_i2c_bench.c | $(BUILD_DIR)
+	$(CROSS_COMPILE)gcc -O2 -Wall $< -o $@
+
+# 内核自带的 IIO 事件监视工具（测接近事件）。工具链头文件没有 linux/iio/，
+# 只复制内核的两个 uapi 头，避免与工具链其他头文件冲突；stdout 设为无缓冲，接管道/文件也立即输出
+IIO_TOOLS := $(KERNEL_DIR)/tools/iio
+$(BUILD_DIR)/iio_event_monitor: app/stdout_unbuffered.c | $(BUILD_DIR)
+	mkdir -p $(BUILD_DIR)/uapi/linux/iio
+	cp $(KERNEL_DIR)/include/uapi/linux/iio/events.h $(KERNEL_DIR)/include/uapi/linux/iio/types.h \
+		$(BUILD_DIR)/uapi/linux/iio/
+	$(CROSS_COMPILE)gcc -O2 -I$(BUILD_DIR)/uapi $(IIO_TOOLS)/iio_event_monitor.c \
+		$(IIO_TOOLS)/iio_utils.c $< -o $@
 
 # IIO 缓冲区连续采集测试（来自驱动仓库）：./iio_buffer [采样率Hz] [秒数] [打印样本数]
 $(BUILD_DIR)/iio_buffer: $(ICM_IIO_DIR)/test/iio_buffer.c | $(BUILD_DIR)

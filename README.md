@@ -19,7 +19,7 @@
 | --- | --- |
 | LED | 字符设备控制、触摸按钮和实体按键控制 |
 | 实体按键 | GPIO 中断、延迟工作消抖、Input 事件上报 |
-| AP3216C | I²C 读取红外、环境光和接近数据，保留有效标志 |
+| AP3216C | IIO 驱动（regmap-i2c）：照度（4 档量程，可换算 lux）、接近、红外三通道，每通道一次 I²C 传输；AP_INT 中断推送接近事件（滞回阈值，靠近/离开各一次） |
 | ICM20608 | 自研 IIO 驱动（子模块）：regmap-spi，数据就绪中断 + triggered buffer，中断上半部记内核时间戳；应用默认 100 Hz 经 IIO 缓冲区批量读取，不丢样 |
 | GT911 / GT1158 | I²C 通信、线程化中断、最多 5 个触点的多点触摸上报；兼容 GT9147 / GT1151 / GT1158（ATK-4384 屏为 GT1158） |
 | UART3 | 使用 BSP 串口驱动进行 115200、8N1 收发回环测试 |
@@ -76,7 +76,7 @@ UART 使用内核已有的 i.MX 串口驱动，本项目提供用户态回环测
 | --- | --- | --- |
 | LED | GPIO1_IO03，低电平有效 | `/dev/led0` |
 | 按键 | GPIO1_IO18，低电平有效，`KEY_ENTER` | `/dev/input/eventX` |
-| AP3216C | I2C1，7 位地址 `0x1e` | `/dev/ap3216c` |
+| AP3216C | I2C1，7 位地址 `0x1e`；INT（AP_INT）：GPIO1_IO01，低电平有效 | `/sys/bus/iio/devices/iio:deviceN`（`in_illuminance_*`、`in_proximity_raw`、`in_intensity_ir_raw`、`events/`） |
 | ICM20608 | ECSPI3，GPIO1_IO20 软件片选，SPI Mode 0；数据就绪中断 GPIO1_IO10 上升沿 | `/sys/bus/iio/devices/iio:deviceN`、`/dev/iio:deviceN` |
 | UART3 | UART3_TX_DATA / UART3_RX_DATA | `/dev/ttymxc2` |
 | GT911 / GT1158 | I2C2，7 位地址 `0x14`；INT：GPIO1_IO09；RST：GPIO5_IO09，低电平复位 | `/dev/input/eventX` |
@@ -128,7 +128,7 @@ make app
 
 - 设备树：`build/imx6ull-device-management.dtb`。
 - 内核模块：`drivers/*.ko`、`icm20608-driver/driver/icm20608.ko`。
-- C 测试程序：`build/led_test`、`key_test`、`key_led_test`、`ap3216c_test`、`iio_buffer`、`uart_test`、`touch_test`。
+- C 测试程序：`build/led_test`、`key_test`、`key_led_test`、`ap3216c_i2c_bench`、`iio_event_monitor`、`iio_buffer`、`uart_test`、`touch_test`。
 
 `app/touch.c` 是保留的分步调试示例，当前顶层 `make app` 不编译它。
 
@@ -180,7 +180,7 @@ NFS 根目录：/home/zero/linux/nfs/rootfs
 cd /device-management
 insmod led_drv.ko
 insmod key_drv.ko
-insmod ap3216c_drv.ko
+insmod ap3216c.ko
 insmod icm20608.ko
 insmod gt911_drv.ko
 dmesg | tail -n 30
@@ -235,7 +235,7 @@ echo 6 > /sys/class/backlight/backlight/brightness
 | LED OFF threshold | 50 | 0～65535 |
 | Sample interval | 1000 ms | 200～60000 ms |
 
-开灯阈值必须小于关灯阈值。修改后点击 `Apply` 才生效。采集间隔决定 AP3216C 的读取周期和界面刷新周期；ICM20608 由数据就绪中断按自己的采样率采集，界面显示每个周期内全部样本的平均值。ALS 原始值不是 lux；温度为 ICM20608 芯片温度，不应直接当作环境温度。
+开灯阈值必须小于关灯阈值。修改后点击 `Apply` 才生效。采集间隔决定 AP3216C 的读取周期和界面刷新周期；ICM20608 由数据就绪中断按自己的采样率采集，界面显示每个周期内全部样本的平均值。界面上 ALS 同时显示原始值和按 `in_illuminance_scale` 换算的 lux，Auto LED 阈值仍按原始值比较；温度为 ICM20608 芯片温度，不应直接当作环境温度。
 
 参数保存到程序同目录的 `device_monitor.ini`，下次启动恢复。文件内容示例：
 
@@ -261,7 +261,7 @@ records/ap3216c_年月日_时分秒_毫秒.csv
 records/icm20608_年月日_时分秒_毫秒.csv
 ```
 
-目录位于可执行程序旁。AP 文件保存原始值和有效标志，无效通道留空；ICM 文件保存换算后的 `g`、`dps` 和 `C`，**每个 IIO 样本一行**（默认 100 行/秒），时间取自驱动在数据就绪中断里记录的内核时间戳（`kernel_timestamp_ns` 列为纳秒原值）。
+目录位于可执行程序旁。AP 文件保存原始值、按量程换算的照度 `als_lux` 和有效标志，无效通道留空；ICM 文件保存换算后的 `g`、`dps` 和 `C`，**每个 IIO 样本一行**（默认 100 行/秒），时间取自驱动在数据就绪中断里记录的内核时间戳（`kernel_timestamp_ns` 列为纳秒原值）。
 
 每收到一次成功的采集结果追加一行，时间戳使用界面处理该结果时的开发板系统时间。默认每路约 1 秒一行；手动读取 AP 会额外追加一行。传感器失败期间没有对应数据行。记录前应先确认开发板系统时间。
 
@@ -276,7 +276,9 @@ records/icm20608_年月日_时分秒_毫秒.csv
 ./led_test /dev/led0 0
 ./key_test /dev/input/event2
 ./key_led_test /dev/input/event2 /dev/led0
-./ap3216c_test /dev/ap3216c
+cat /sys/bus/iio/devices/iio:device*/in_proximity_raw   # AP3216C 各通道（先看 name 确认是哪个设备）
+./iio_event_monitor ap3216c   # 遮挡/移开传感器，看 proximity rising / falling 事件
+./ap3216c_i2c_bench /dev/i2c-0 200   # 连续读行为验证与读取方式开销对比
 ./iio_buffer 100 5 3   # 100 Hz 采集 5 秒，统计采样间隔和丢样
 ./touch_test /dev/input/event1
 ./uart_test /dev/ttymxc2
@@ -290,7 +292,7 @@ LED 接口使用一个字节的 ASCII 字符 `'0'` / `'1'`。UART 回环测试�
 Linux 驱动 / Input 事件
           │
           ├── SensorWorker（工作线程）
-          │      ├── QTimer 定时读取 AP3216C
+          │      ├── QTimer 定时读取 AP3216C（IIO sysfs）；接近事件 fd 用 QSocketNotifier 监听
           │      ├── ICM20608：数据就绪中断 → 内核 IIO 缓冲区；每 100 ms 批量读走（Icm20608Iio）
           │      └── 信号传回采集结果（ICM 为一个周期的样本批次）与错误
           │
@@ -305,6 +307,10 @@ Linux 驱动 / Input 事件
 显示与触摸分别通过 framebuffer 和 Input / tslib 接入。界面线程不直接等待传感器采集，运行时的定时器间隔修改通过队列信号交给工作线程。
 
 ICM20608 为什么定时批量读、不用 `poll`：4.1 内核的 `iio_push_to_buffer()` 每推入一个样本都会唤醒 `poll` 等待者（`buffer/watermark` 只决定 `poll` 是否返回），实测 100 Hz 时用 `QSocketNotifier` 监听 fd，工作线程每秒被唤醒约 126 次；改为每 100 ms 读一次后降到约 34 次，其中约 24 次来自每秒一次的 AP3216C 读取（6 次单字节 SMBus 传输）。
+
+AP3216C 为什么每个通道读一次、不一次读 6 字节：数据手册只给了单字节读时序，`app/ap3216c_i2c_bench.c` 实测芯片地址只在一对寄存器（低、高字节）内自增，读满 2 字节回到该对开头，从 0x0A 连续读 6 字节得到的是 IR、IR、IR。每通道读一对后，一组数据从 6 次传输 / 24 次等待降到 3 次 / 15 次（耗时 3.4 ms → 2.1 ms），工作线程降到约 25 次唤醒/秒。i.MX I²C 驱动每个字节等一次中断，所以等待次数 ≈ 每次传输 3 次 + 每字节 1 次。
+
+接近事件用 `QSocketNotifier` 而 IMU 不用：接近事件只在状态变化时由中断产生，一次遮挡两次，fd 可读才唤醒正合适；IMU 是 100 Hz 连续数据流，见上一段。
 
 ## 常见问题
 

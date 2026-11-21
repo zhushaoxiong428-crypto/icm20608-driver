@@ -7,8 +7,8 @@
 
 cd "$(dirname "$0")" || exit 1
 
-# 1. 加载驱动（已加载的跳过）。icm20608.ko 为自研 IIO 驱动（icm20608-driver/）
-for m in led_drv key_drv ap3216c_drv icm20608 gt911_drv; do
+# 1. 加载驱动（已加载的跳过）。ap3216c.ko、icm20608.ko 为 IIO 驱动（drivers/、icm20608-driver/）
+for m in led_drv key_drv ap3216c icm20608 gt911_drv; do
 	if ! grep -q "^${m} " /proc/modules; then
 		insmod "./${m}.ko" || echo "insmod ${m}.ko failed"
 	fi

@@ -2,16 +2,12 @@
 #include "ap3216c_data.h"
 
 #include <QTimer>
+#include <QSocketNotifier>
 #include <QDebug>
-
-#include <fcntl.h>
-#include <unistd.h>
-#include <errno.h>
-#include <string.h>
 
 SensorWorker::SensorWorker(QObject *parent)
 	: QObject(parent)
-	, apFd(-1)
+	, apEventNotifier(nullptr)
 	, apTimer(new QTimer(this))
 	, imuDrainTimer(new QTimer(this))
 	, imuTimer(new QTimer(this))
@@ -37,13 +33,7 @@ SensorWorker::~SensorWorker()
 	imuDrainTimer->stop();
 	imuTimer->stop();
 
-	if (apFd >= 0) {
-		if (::close(apFd) < 0) {
-			qWarning() << "close AP3216C failed:" << strerror(errno);
-		}
-	}
-
-	/* imu 析构时关闭缓冲区，芯片停止产生数据就绪中断 */
+	/* ap、imu 析构时关闭接近事件和 IIO 缓冲区，芯片停止产生中断 */
 }
 
 void SensorWorker::setImuRate(int rateHz)
@@ -60,15 +50,22 @@ void SensorWorker::setSampleInterval(int intervalMs)
 
 void SensorWorker::start()
 {
-	apFd = ::open("/dev/ap3216c", O_RDONLY);
-	if (apFd < 0) {
-		emit apErrorOccurred(
-			QString("open AP3216C failed: %1")
-				.arg(QString::fromLocal8Bit(strerror(errno))));
+	QString apError;
+	if (!ap.open(&apError)) {
+		emit apErrorOccurred(apError);
 	} else {
 		apTimer->start(); /* 使用设置的采集间隔 */
 		emit ready(true); /* 用来通知这个界面手动按钮启用 */
 		readApOnce();
+
+		/* 接近事件很少发生，适合事件驱动：fd 可读才唤醒（与 IMU 的 100 Hz 数据流不同） */
+		if (ap.eventFd() >= 0) {
+			apEventNotifier = new QSocketNotifier(ap.eventFd(), QSocketNotifier::Read, this);
+			connect(apEventNotifier, &QSocketNotifier::activated,
+				this, &SensorWorker::readApEvents);
+		} else {
+			qWarning() << "AP3216C proximity events unavailable (no interrupt in device tree?)";
+		}
 	}
 
 	/*
@@ -91,21 +88,34 @@ void SensorWorker::start()
 
 void SensorWorker::readApOnce()
 {
-	struct ap3216c_data data;
-	ssize_t ret;
+	int ir;
+	int als;
+	int ps;
+	int flags;
+	QString error;
 
-	do {
-		ret = ::read(apFd, &data, sizeof(data));
-	} while (ret < 0 && errno == EINTR);
-
-	if (ret < 0) {
-		emit apErrorOccurred(
-			QString("read AP3216C failed: %1")
-				.arg(QString::fromLocal8Bit(strerror(errno))));
+	if (!ap.read(&ir, &als, &ps, &flags, &error)) {
+		emit apErrorOccurred(error);
 		return;
 	}
 
-	emit apDataReady(data.ir, data.als, data.ps, data.flags);
+	emit apDataReady(ir, als, ps, flags, ap.luxPerCount());
+}
+
+void SensorWorker::readApEvents()
+{
+	QVector<Ap3216cIio::ProximityEvent> events;
+	QString error;
+
+	if (ap.readEvents(events, &error) < 0) {
+		apEventNotifier->setEnabled(false);
+		emit apErrorOccurred(error);
+		return;
+	}
+
+	for (const Ap3216cIio::ProximityEvent &event : events) {
+		emit proximityChanged(event.near, event.timestampNs);
+	}
 }
 
 void SensorWorker::readImu()

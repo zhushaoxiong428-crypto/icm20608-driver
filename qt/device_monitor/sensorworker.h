@@ -6,8 +6,10 @@
 #include <QVector>
 
 #include "icm20608iio.h"
+#include "ap3216ciio.h"
 
 class QTimer;
+class QSocketNotifier;
 
 class SensorWorker : public QObject
 {
@@ -31,8 +33,10 @@ public slots:
 signals:
 	/* AP3216C 状态与数据 */
 	void ready(bool available); /*通知界面设备已准备好 */
-	void apDataReady(
-		int ir, int als, int ps, int flags); /*把采集结果发送给界面 */
+	void apDataReady(int ir, int als, int ps, int flags,
+		double luxPerCount); /*把采集结果发送给界面，照度 = als * luxPerCount */
+	/* AP3216C 接近事件：来自 AP_INT 中断，near 为 true 表示物体靠近 */
+	void proximityChanged(bool near, qint64 timestampNs);
 	void apErrorOccurred(const QString &message); /*把错误信息发送给界面 */
 
 	/*
@@ -44,10 +48,12 @@ signals:
 
 private slots:
 	void readImu(); /* 定时读走 IIO 缓冲区里攒下的样本 */
+	void readApEvents(); /* AP3216C 事件 fd 可读 */
 	void publishImu(); /* 界面刷新周期到，把攒下的样本交给界面 */
 
 private:
-	int apFd;
+	Ap3216cIio ap;
+	QSocketNotifier *apEventNotifier;
 	QTimer *apTimer;
 
 	Icm20608Iio imu;

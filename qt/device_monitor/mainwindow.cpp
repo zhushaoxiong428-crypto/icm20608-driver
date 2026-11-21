@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QRegExp>
 
 #include <fcntl.h>
 #include <unistd.h>
@@ -56,6 +57,8 @@ MainWindow::MainWindow(QWidget *parent)
 	, keyFd(-1)
 	, keyNotifier(nullptr)
 	, Worker(new SensorWorker)
+	, proximityState(-1)
+	, proximityEvents(0)
 	, recording(false)
 	, recordStartNs(0)
 {
@@ -106,6 +109,9 @@ MainWindow::MainWindow(QWidget *parent)
 
 	connect(Worker, &SensorWorker::apErrorOccurred,
 		this, &MainWindow::showApError);
+
+	connect(Worker, &SensorWorker::proximityChanged,
+		this, &MainWindow::updateProximity);
 
 	connect(Worker, &SensorWorker::icmSamplesReady,
 		this, &MainWindow::updateIcmData);
@@ -320,8 +326,12 @@ void MainWindow::on_autoModeCheckBox_toggled(bool checked)
 	}
 }
 
-void MainWindow::updateApData(int ir, int als, int ps, int flags)
+void MainWindow::updateApData(int ir, int als, int ps, int flags, double luxPerCount)
 {
+	/* 接近状态来自中断事件（实时），PS 数值按采集间隔刷新 */
+	static const char *const kProximityText[] = { "", "  FAR", "  NEAR" };
+	const char *proximity = kProximityText[proximityState + 1];
+
 	ui->apStatusLabel->setText("AP3216C: OK");
 	ui->apStatusLabel->setStyleSheet("color: #89d185;");
 	ui->apStatusLabel->setToolTip(QString());
@@ -331,19 +341,20 @@ void MainWindow::updateApData(int ir, int als, int ps, int flags)
 		: QString("IR: invalid"));
 
 	ui->alsLabel->setText((flags & AP3216C_ALS_VALID)
-		? QString("ALS: %1").arg(als)
+		? QString("ALS: %1 (%2 lx)").arg(als).arg(als * luxPerCount, 0, 'f', 1)
 		: QString("ALS: invalid"));
 
 	ui->psLabel->setText((flags & AP3216C_PS_VALID)
-		? QString("PS: %1").arg(ps)
-		: QString("PS: invalid"));
+		? QString("PS: %1%2").arg(ps).arg(proximity)
+		: QString("PS: invalid%1").arg(proximity));
 
 	if (recording) {
 		/* 无效通道留空，flags 保留本次各通道的有效标志。 */
-		QString row = QString("%1,%2,%3,%4,%5\n")
+		QString row = QString("%1,%2,%3,%4,%5,%6\n")
 			.arg(QDateTime::currentDateTime().toString(Qt::ISODateWithMs))
 			.arg((flags & AP3216C_IR_VALID) ? QString::number(ir) : QString())
 			.arg((flags & AP3216C_ALS_VALID) ? QString::number(als) : QString())
+			.arg((flags & AP3216C_ALS_VALID) ? QString::number(als * luxPerCount, 'f', 2) : QString())
 			.arg((flags & AP3216C_PS_VALID) ? QString::number(ps) : QString())
 			.arg(flags);
 
@@ -353,6 +364,23 @@ void MainWindow::updateApData(int ir, int als, int ps, int flags)
 	if (autoMode && (flags & AP3216C_ALS_VALID)) {
 		controlLedByLight(als);
 	}
+}
+
+void MainWindow::updateProximity(bool near, qint64 timestampNs)
+{
+	proximityState = near ? 1 : 0;
+	proximityEvents++;
+
+	/* 不等下一次采集，立即更新 PS 一栏的状态后缀 */
+	QString text = ui->psLabel->text();
+	text.remove(QRegExp("  (NEAR|FAR)$"));
+	ui->psLabel->setText(text + (near ? "  NEAR" : "  FAR"));
+
+	const QDateTime time = QDateTime::fromMSecsSinceEpoch(timestampNs / 1000000);
+	ui->statusbar->showMessage(QString("Proximity %1 (interrupt #%2 at %3)")
+		.arg(near ? "NEAR" : "FAR")
+		.arg(proximityEvents)
+		.arg(time.toString("HH:mm:ss.zzz")), 5000);
 }
 
 void MainWindow::showApError(const QString &message)
@@ -571,7 +599,7 @@ void MainWindow::startRecording()
 		return;
 	}
 
-	QByteArray apHeader = "timestamp,ir_raw,als_raw,ps_raw,flags\n";
+	QByteArray apHeader = "timestamp,ir_raw,als_raw,als_lux,ps_raw,flags\n";
 	/* ICM 每个 IIO 样本一行，时间来自内核在数据就绪中断里记录的时间戳 */
 	QByteArray icmHeader = "timestamp,kernel_timestamp_ns,accel_x_g,accel_y_g,accel_z_g,"
 		"gyro_x_dps,gyro_y_dps,gyro_z_dps,temp_c\n";
