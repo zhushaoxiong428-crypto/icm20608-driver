@@ -26,8 +26,20 @@ HEADERS += \
     mainwindow.h \
     sensorworker.h
 
-FORMS += \
-    mainwindow.ui
+# 屏幕布局：默认 ATK-4384（4.3 寸 800x480）；qmake LCD=480x272（ATK-4342）或 LCD=1024x600（7 寸）
+# 各 .ui 的控件 objectName 相同，uic 都生成 ui_mainwindow.h，C++ 代码无需改动
+# 小屏布局由 gen_ui.py 生成：python3 gen_ui.py 800x480
+isEmpty(LCD): LCD = 800x480
+equals(LCD, 1024x600) {
+    FORMS += mainwindow.ui
+} else:equals(LCD, 800x480) {
+    FORMS += ui_800x480/mainwindow.ui
+} else:equals(LCD, 480x272) {
+    FORMS += ui_480x272/mainwindow.ui
+} else {
+    error("Unsupported LCD=$$LCD, use 800x480, 480x272 or 1024x600")
+}
+message("device_monitor UI layout: $$LCD")
 
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin

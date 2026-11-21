@@ -1,0 +1,730 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MainWindow</class>
+ <widget class="QMainWindow" name="MainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>480</width>
+    <height>272</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Device Monitor</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <property name="styleSheet">
+    <string notr="true">QWidget#centralwidget {
+	background-color: #1e1e1e;
+	color: #d4d4d4;
+}
+QWidget {
+	font-family: Consolas;
+	font-size: 12px;
+}
+QLabel {
+	color: #d4d4d4;
+}
+QGroupBox {
+	background-color: #252526;
+	border: 1px solid #454545;
+	border-radius: 4px;
+	margin-top: 9px;
+	padding: 2px;
+}
+QGroupBox::title {
+	subcontrol-origin: margin;
+	subcontrol-position: top left;
+	left: 8px;
+	padding: 0 3px;
+	color: #4fc1ff;
+}
+QGroupBox#controlGroup {
+	margin-top: 0px;
+}
+QPushButton {
+	background-color: #333333;
+	color: #ffffff;
+	border: 1px solid #555555;
+	border-radius: 4px;
+	padding: 2px 8px;
+}
+QPushButton:pressed {
+	background-color: #094771;
+	border-color: #4fc1ff;
+}
+QPushButton:disabled {
+	background-color: #292929;
+	color: #777777;
+	border-color: #383838;
+}
+QPushButton#exitButton {
+	background-color: #683333;
+}
+QPushButton#exitButton:pressed {
+	background-color: #8c4242;
+}
+QPushButton#applySettingsButton, QPushButton#recordButton {
+	background-color: #094771;
+}
+QLabel#apStatusLabel, QLabel#icmStatusLabel, QLabel#settingsHintLabel {
+	color: #dcdcaa;
+}
+QLabel#settingsHintLabel, QLabel#configPathLabel, QLabel#recordInfoLabel, QLabel#recordPathLabel {
+	font-size: 11px;
+	color: #999999;
+}
+QWidget#monitorPage, QWidget#settingsPage, QWidget#recordPage {
+	background-color: #1e1e1e;
+}
+QTabWidget::pane {
+	border: 1px solid #454545;
+	border-radius: 4px;
+	top: -1px;
+}
+QTabBar::tab {
+	background-color: #2d2d30;
+	color: #d4d4d4;
+	min-width: 72px;
+	min-height: 24px;
+	padding: 0 10px;
+}
+QTabBar::tab:selected {
+	background-color: #094771;
+	color: #ffffff;
+}
+QCheckBox {
+	color: #d4d4d4;
+	spacing: 6px;
+}
+QCheckBox::indicator {
+	width: 18px;
+	height: 18px;
+}
+QCheckBox:disabled {
+	color: #777777;
+}
+QSpinBox {
+	background-color: #333333;
+	color: #ffffff;
+	border: 1px solid #555555;
+	border-radius: 4px;
+	padding: 1px 26px 1px 6px;
+}
+QSpinBox::up-button, QSpinBox::down-button {
+	width: 24px;
+}
+QStatusBar {
+	font-size: 11px;
+	color: #999999;
+}
+</string>
+   </property>
+   <layout class="QVBoxLayout" name="mainLayout" stretch="1,0">
+    <property name="spacing">
+     <number>3</number>
+    </property>
+    <property name="leftMargin">
+     <number>3</number>
+    </property>
+    <property name="topMargin">
+     <number>3</number>
+    </property>
+    <property name="rightMargin">
+     <number>3</number>
+    </property>
+    <property name="bottomMargin">
+     <number>0</number>
+    </property>
+    <item>
+     <widget class="QTabWidget" name="mainTabWidget">
+      <property name="currentIndex">
+       <number>0</number>
+      </property>
+      <widget class="QWidget" name="monitorPage">
+       <attribute name="title">
+        <string>Monitor</string>
+       </attribute>
+       <layout class="QHBoxLayout" name="monitorLayout" stretch="1,2">
+        <property name="spacing">
+         <number>4</number>
+        </property>
+        <property name="leftMargin">
+         <number>3</number>
+        </property>
+        <property name="topMargin">
+         <number>2</number>
+        </property>
+        <property name="rightMargin">
+         <number>3</number>
+        </property>
+        <property name="bottomMargin">
+         <number>3</number>
+        </property>
+        <item>
+         <widget class="QGroupBox" name="environmentGroup">
+          <property name="title">
+           <string>Environment</string>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout">
+           <property name="spacing">
+            <number>2</number>
+           </property>
+           <property name="leftMargin">
+            <number>4</number>
+           </property>
+           <property name="topMargin">
+            <number>4</number>
+           </property>
+           <property name="rightMargin">
+            <number>4</number>
+           </property>
+           <property name="bottomMargin">
+            <number>4</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="apStatusLabel">
+             <property name="text">
+              <string>AP3216C: WAITING</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="irLabel">
+             <property name="text">
+              <string>IR: --</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="alsLabel">
+             <property name="text">
+              <string>ALS: --</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="psLabel">
+             <property name="text">
+              <string>PS: --</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="envSpacer">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QPushButton" name="readSensorButton">
+             <property name="text">
+              <string>Read Sensor</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>0</width>
+               <height>30</height>
+              </size>
+             </property>
+             <property name="focusPolicy">
+              <enum>Qt::NoFocus</enum>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QGroupBox" name="motionGroup">
+          <property name="title">
+           <string>Motion</string>
+          </property>
+          <layout class="QVBoxLayout" name="verticalLayout_2">
+           <property name="spacing">
+            <number>2</number>
+           </property>
+           <property name="leftMargin">
+            <number>4</number>
+           </property>
+           <property name="topMargin">
+            <number>4</number>
+           </property>
+           <property name="rightMargin">
+            <number>4</number>
+           </property>
+           <property name="bottomMargin">
+            <number>4</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="icmStatusLabel">
+             <property name="text">
+              <string>ICM20608: WAITING</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="accelLabel">
+             <property name="text">
+              <string>ACC: X=-- Y=-- Z=--</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="gyroLabel">
+             <property name="text">
+              <string>GYRO: X=-- Y=-- Z=--</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="tempLabel">
+             <property name="text">
+              <string>TEMP: --</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="motionSpacer">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="settingsPage">
+       <attribute name="title">
+        <string>Settings</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="settingsLayout">
+        <property name="spacing">
+         <number>2</number>
+        </property>
+        <property name="leftMargin">
+         <number>3</number>
+        </property>
+        <property name="topMargin">
+         <number>2</number>
+        </property>
+        <property name="rightMargin">
+         <number>3</number>
+        </property>
+        <property name="bottomMargin">
+         <number>3</number>
+        </property>
+        <item>
+         <widget class="QGroupBox" name="settingsGroup">
+          <property name="title">
+           <string>Sampling and Auto LED</string>
+          </property>
+          <layout class="QGridLayout" name="settingsGridLayout">
+           <property name="leftMargin">
+            <number>6</number>
+           </property>
+           <property name="topMargin">
+            <number>4</number>
+           </property>
+           <property name="rightMargin">
+            <number>6</number>
+           </property>
+           <property name="bottomMargin">
+            <number>4</number>
+           </property>
+           <property name="horizontalSpacing">
+            <number>6</number>
+           </property>
+           <property name="verticalSpacing">
+            <number>3</number>
+           </property>
+           <item row="0" column="0">
+            <widget class="QLabel" name="lightOnSpinBoxLabel">
+             <property name="text">
+              <string>LED ON threshold</string>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="1">
+            <widget class="QSpinBox" name="lightOnSpinBox">
+             <property name="minimumSize">
+              <size>
+               <width>120</width>
+               <height>26</height>
+              </size>
+             </property>
+             <property name="minimum">
+              <number>0</number>
+             </property>
+             <property name="maximum">
+              <number>65535</number>
+             </property>
+             <property name="value">
+              <number>20</number>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLabel" name="lightOffSpinBoxLabel">
+             <property name="text">
+              <string>LED OFF threshold</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="1">
+            <widget class="QSpinBox" name="lightOffSpinBox">
+             <property name="minimumSize">
+              <size>
+               <width>120</width>
+               <height>26</height>
+              </size>
+             </property>
+             <property name="minimum">
+              <number>0</number>
+             </property>
+             <property name="maximum">
+              <number>65535</number>
+             </property>
+             <property name="value">
+              <number>50</number>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0">
+            <widget class="QLabel" name="sampleIntervalSpinBoxLabel">
+             <property name="text">
+              <string>Sample interval</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="1">
+            <widget class="QSpinBox" name="sampleIntervalSpinBox">
+             <property name="minimumSize">
+              <size>
+               <width>120</width>
+               <height>26</height>
+              </size>
+             </property>
+             <property name="suffix">
+              <string> ms</string>
+             </property>
+             <property name="minimum">
+              <number>200</number>
+             </property>
+             <property name="maximum">
+              <number>60000</number>
+             </property>
+             <property name="singleStep">
+              <number>100</number>
+             </property>
+             <property name="value">
+              <number>1000</number>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="2" rowspan="3">
+            <widget class="QPushButton" name="applySettingsButton">
+             <property name="text">
+              <string>Apply</string>
+             </property>
+             <property name="minimumSize">
+              <size>
+               <width>70</width>
+               <height>78</height>
+              </size>
+             </property>
+             <property name="focusPolicy">
+              <enum>Qt::NoFocus</enum>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="settingsFeedbackLabel">
+          <property name="text">
+           <string>Parameters apply after pressing Apply.</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="settingsHintLabel">
+          <property name="text">
+           <string>ALS thresholds use raw counts, not lux. LED ON must be lower than LED OFF.</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="configPathLabel">
+          <property name="text">
+           <string>Config: device_monitor.ini</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="settingsSpacer">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
+      <widget class="QWidget" name="recordPage">
+       <attribute name="title">
+        <string>Record</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="recordPageLayout">
+        <property name="spacing">
+         <number>2</number>
+        </property>
+        <property name="leftMargin">
+         <number>3</number>
+        </property>
+        <property name="topMargin">
+         <number>2</number>
+        </property>
+        <property name="rightMargin">
+         <number>3</number>
+        </property>
+        <property name="bottomMargin">
+         <number>3</number>
+        </property>
+        <item>
+         <widget class="QGroupBox" name="recordGroup">
+          <property name="title">
+           <string>Data Recording</string>
+          </property>
+          <layout class="QVBoxLayout" name="recordLayout">
+           <property name="spacing">
+            <number>3</number>
+           </property>
+           <property name="leftMargin">
+            <number>6</number>
+           </property>
+           <property name="topMargin">
+            <number>4</number>
+           </property>
+           <property name="rightMargin">
+            <number>6</number>
+           </property>
+           <property name="bottomMargin">
+            <number>4</number>
+           </property>
+           <item>
+            <layout class="QHBoxLayout" name="recordStatusRow" stretch="1,0">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <property name="leftMargin">
+              <number>0</number>
+             </property>
+             <property name="topMargin">
+              <number>0</number>
+             </property>
+             <property name="rightMargin">
+              <number>0</number>
+             </property>
+             <property name="bottomMargin">
+              <number>0</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="recordStatusLabel">
+               <property name="text">
+                <string>Recording: OFF</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="recordButton">
+               <property name="text">
+                <string>Start Recording</string>
+               </property>
+               <property name="minimumSize">
+                <size>
+                 <width>140</width>
+                 <height>30</height>
+                </size>
+               </property>
+               <property name="focusPolicy">
+                <enum>Qt::NoFocus</enum>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item>
+            <widget class="QLabel" name="recordPathLabel">
+             <property name="text">
+              <string>Path: --</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="recordInfoLabel">
+             <property name="text">
+              <string>Two timestamped CSV files per session.
+AP: raw values. ICM: g, dps, C.</string>
+             </property>
+             <property name="wordWrap">
+              <bool>true</bool>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <spacer name="recordSpacer">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>0</width>
+            <height>0</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+       </layout>
+      </widget>
+     </widget>
+    </item>
+    <item>
+     <widget class="QGroupBox" name="controlGroup">
+      <layout class="QHBoxLayout" name="horizontalLayout" stretch="1,0,2,0">
+       <property name="spacing">
+        <number>4</number>
+       </property>
+       <property name="leftMargin">
+        <number>4</number>
+       </property>
+       <property name="topMargin">
+        <number>2</number>
+       </property>
+       <property name="rightMargin">
+        <number>4</number>
+       </property>
+       <property name="bottomMargin">
+        <number>2</number>
+       </property>
+       <item>
+        <widget class="QLabel" name="keyLabel">
+         <property name="text">
+          <string>KEY: --</string>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>96</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="autoModeCheckBox">
+         <property name="text">
+          <string>Auto LED</string>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>30</height>
+          </size>
+         </property>
+         <property name="focusPolicy">
+          <enum>Qt::NoFocus</enum>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="pushButton">
+         <property name="text">
+          <string>LedTouch</string>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>30</height>
+          </size>
+         </property>
+         <property name="focusPolicy">
+          <enum>Qt::NoFocus</enum>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="exitButton">
+         <property name="text">
+          <string>Exit</string>
+         </property>
+         <property name="minimumSize">
+          <size>
+           <width>56</width>
+           <height>30</height>
+          </size>
+         </property>
+         <property name="focusPolicy">
+          <enum>Qt::NoFocus</enum>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QStatusBar" name="statusbar">
+   <property name="styleSheet">
+    <string notr="true">QStatusBar { background-color: #1e1e1e; color: #999999; font-family: Consolas; font-size: 11px; }</string>
+   </property>
+   <property name="sizeGripEnabled">
+    <bool>false</bool>
+   </property>
+  </widget>
+ </widget>
+ <resources />
+ <connections />
+</ui>
